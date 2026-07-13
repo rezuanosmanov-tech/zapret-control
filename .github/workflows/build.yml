@@ -1,10 +1,9 @@
 name: Build release
 
-# Срабатывает при пуше тега версии (например v1.0.0) или вручную из вкладки
-# "Actions". Собирает две вещи и вешает их на GitHub Release:
-#   * ZapretControl-portable.exe  — один файл, ничего ставить не надо
-#   * ZapretControl-<версия>.zip  — папка с node_modules внутри (то, что ты
-#     раздаёшь в Discord: распаковал, сделал ярлык, запустил)
+# Срабатывает при пуше тега версии (например v1.0.1) или вручную из вкладки
+# "Actions". Собирает раздаточный архив ZapretControl-<версия>.zip — папку с
+# node_modules внутри — и прикрепляет его к GitHub Release. Именно эту ссылку
+# ты кидаешь в Discord. Portable exe больше не собирается.
 on:
   push:
     tags:
@@ -24,31 +23,24 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build portable exe
-        run: npm run dist
-
       - name: Pack release zip (app + node_modules)
         run: npm run pack
 
-      - name: Upload build artifacts
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ZapretControl
-          path: |
-            core/dist/*.exe
-            release/*.zip
+          path: release/*.zip
 
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            core/dist/*.exe
-            release/*.zip
+          files: release/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -15,7 +15,6 @@ zapret-control/
 ├─ runtime/                   портативный Node.js (качается сам, в git не идёт)
 ├─ tools/ensure-node.bat      скачивает runtime при первом запуске
 ├─ Setup.bat                  DEV: поставить зависимости + ярлык
-├─ Build.bat                  DEV: собрать portable exe
 ├─ Pack.bat                   DEV: собрать раздаточный zip
 ├─ Start Zapret Control.bat   запуск
 └─ Create Desktop Shortcut.bat  ярлык на рабочий стол
@@ -32,7 +31,6 @@ Node в `runtime/`, и все скрипты зовут его по абсолю
 |---|---|
 | `Setup.bat` | ставит зависимости в `core/` и делает ярлык на рабочем столе |
 | `Start Zapret Control.bat` | запускает `electron.exe` напрямую, с правами админа |
-| `Build.bat` | `core/dist/ZapretControl-portable.exe` |
 | `Pack.bat` | `release/ZapretControl-<версия>.zip` — то, что раздаётся |
 
 ## Что получают пользователи
@@ -40,7 +38,10 @@ Node в `runtime/`, и все скрипты зовут его по абсолю
 В `Pack.bat` собирается zip, внутри которого уже лежит `core/node_modules` с
 Electron. Людям не нужны ни Node.js, ни npm, ни интернет при установке: распаковал
 папку, запустил `Create Desktop Shortcut.bat`, дальше — с ярлыка. `Setup.bat`,
-`Build.bat`, `runtime/` и `electron-builder` в раздачу не попадают.
+`Pack.bat` и `runtime/` в раздачу не попадают.
+
+Portable exe не собирается: electron-builder убран из зависимостей. Раздаётся
+ровно один файл — архив, чтобы никого не путать выбором.
 
 Ярлык создаётся с флагом «Запуск от имени администратора» (бит `0x20` в байте 21
 файла `.lnk`) — приложение ставит службу Windows и без прав админа не заработает.
@@ -65,7 +66,7 @@ Electron. Людям не нужны ни Node.js, ни npm, ни интерне
 
 ## Релиз
 
-Пуш тега `v*` запускает GitHub Actions: собирается и portable exe, и раздаточный
-zip, оба прикрепляются к релизу.
+Пуш тега `v*` запускает GitHub Actions: собирается раздаточный zip и прикрепляется
+к релизу. Перед тегом подними `version` в `core/package.json`.
 
 made by **_SAMOREZ_**

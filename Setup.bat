@@ -37,9 +37,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0core\tools\make-shortc
 echo.
 echo  ============================================
 echo    DONE
-echo    Run:    Start Zapret Control.bat
-echo    Build:  Build.bat   (portable exe)
-echo    Pack:   Pack.bat    (release zip for Discord)
+echo    Run:   Start Zapret Control.bat
+echo    Pack:  Pack.bat   (release zip for Discord)
 echo  ============================================
 echo.
 pause

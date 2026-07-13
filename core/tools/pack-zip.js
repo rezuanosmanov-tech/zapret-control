@@ -36,8 +36,8 @@ for (const item of ['main.js', 'preload.js', 'src', 'assets', 'tools']) {
   fs.cpSync(path.join(CORE, item), path.join(DEST, item), { recursive: true });
 }
 
-// package.json без devDependencies: electron нужен в рантайме (мы запускаем
-// electron.exe напрямую), а electron-builder весит сотни мегабайт и не нужен.
+// Манифест для раздачи: только electron. Скрипт pack и tools/ пользователю
+// не нужны, поэтому в архив они не едут.
 fs.writeFileSync(path.join(DEST, 'package.json'), JSON.stringify({
   name: pkg.name,
   version: pkg.version,
@@ -46,7 +46,7 @@ fs.writeFileSync(path.join(DEST, 'package.json'), JSON.stringify({
   author: pkg.author,
   license: pkg.license,
   scripts: { start: 'electron .' },
-  dependencies: { electron: pkg.devDependencies.electron },
+  dependencies: { electron: pkg.dependencies.electron },
 }, null, 2) + '\n');
 
 for (const bat of ['Start Zapret Control.bat', 'Create Desktop Shortcut.bat']) {

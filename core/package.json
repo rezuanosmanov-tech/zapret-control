@@ -7,31 +7,9 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win portable",
     "pack": "node tools/pack-zip.js"
   },
-  "build": {
-    "appId": "com.zapret.control",
-    "productName": "Zapret Control",
-    "win": {
-      "target": [
-        "portable"
-      ],
-      "requestedExecutionLevel": "requireAdministrator",
-      "icon": "assets/icon.ico"
-    },
-    "portable": {
-      "artifactName": "ZapretControl-portable.exe"
-    },
-    "files": [
-      "main.js",
-      "preload.js",
-      "src/**/*",
-      "assets/**/*"
-    ]
-  },
-  "devDependencies": {
-    "electron": "^31.0.0",
-    "electron-builder": "^24.13.3"
+  "dependencies": {
+    "electron": "^31.0.0"
   }
 }
