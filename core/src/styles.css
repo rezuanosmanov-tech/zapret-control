@@ -1,0 +1,406 @@
+/* ============================================================= токены ===== */
+:root{
+  --red:#ff3b5c; --blue:#3d8bff; --purple:#8b5cf6;
+  --red-dim:#c22946; --blue-dim:#2b62c9; --purple-dim:#6d3fd6;
+  --grad:linear-gradient(135deg,var(--red) 0%,var(--purple) 52%,var(--blue) 100%);
+
+  --bg:#0b0b12; --bg-2:#0f0f18;
+  --panel:#14141f; --panel-2:#191926; --stroke:#26263a;
+  --text:#edeef5; --muted:#9a9ab4; --faint:#6a6a82;
+
+  --ok:var(--blue); --warn:var(--purple); --err:var(--red);
+  --radius:16px; --radius-sm:11px;
+  --mono:ui-monospace,"Cascadia Code","Consolas",monospace;
+  --sans:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--sans); color:var(--text); background:var(--bg);
+  overflow:hidden; -webkit-user-select:none; user-select:none;
+  background-image:
+    radial-gradient(900px 500px at 12% -10%, rgba(139,92,246,.16), transparent 60%),
+    radial-gradient(820px 520px at 108% 8%, rgba(61,139,255,.14), transparent 60%),
+    radial-gradient(700px 500px at 60% 120%, rgba(255,59,92,.10), transparent 60%);
+}
+/* технологичная сетка поверх фона */
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5;
+  background-image:
+    linear-gradient(rgba(139,92,246,.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(61,139,255,.045) 1px, transparent 1px);
+  background-size:44px 44px;
+  -webkit-mask-image:radial-gradient(circle at 50% 40%, #000 30%, transparent 85%);
+  mask-image:radial-gradient(circle at 50% 40%, #000 30%, transparent 85%);}
+.app,.tunnel-line,.toast,.drop-overlay{position:relative;z-index:1}
+.tunnel-line{position:fixed;top:0;left:0;right:0;height:2px;background:var(--grad);
+  background-size:220% 100%; animation:slide 7s linear infinite; z-index:50;}
+@keyframes slide{to{background-position:220% 0}}
+
+/* =============================================================== каркас ==== */
+.app{display:grid;grid-template-columns:236px 1fr;height:100vh}
+
+.sidebar{background:linear-gradient(180deg,var(--bg-2),#0c0c14);
+  border-right:1px solid var(--stroke);display:flex;flex-direction:column;padding:20px 16px}
+.brand{display:flex;align-items:center;gap:13px;padding:6px 4px 22px}
+.brand-mark{width:62px;height:62px;border-radius:15px;object-fit:cover;flex-shrink:0;
+  box-shadow:0 0 0 1px rgba(255,255,255,.13), 0 0 26px rgba(139,92,246,.55), 0 8px 18px rgba(0,0,0,.5);}
+.brand-name{font-weight:800;letter-spacing:2.4px;font-size:17px;display:block;white-space:nowrap;
+  background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.brand-sub{font-size:9.5px;letter-spacing:2.6px;text-transform:uppercase;color:var(--faint)}
+
+.nav{display:flex;flex-direction:column;gap:0;margin-top:6px}
+.nav-category{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--faint);
+  font-weight:700;padding:14px 12px 6px}
+.nav-item{display:flex;align-items:center;gap:2px;padding:8px 12px;border:0;cursor:pointer;
+  background:transparent;color:var(--muted);border-radius:6px;font-size:14px;
+  font-family:var(--sans);text-align:left;transition:background .12s,color .12s;position:relative;
+  overflow:hidden}
+.nav-item .tree{font-family:var(--mono);font-size:15px;font-weight:700;opacity:.5;width:24px;
+  flex-shrink:0;letter-spacing:-1px}
+.nav-item:hover{background:rgba(148,155,164,.09);color:var(--text)}
+.nav-item.active{background:rgba(148,155,164,.16);color:#fff;font-weight:600}
+.nav-item.active .tree{opacity:.9}
+.nav-item::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:0;
+  border-radius:0 3px 3px 0;background:var(--grad);transition:height .16s ease}
+.nav-item:hover::before{height:18px}
+.nav-item.active::before{height:26px}
+
+.sidebar-foot{margin-top:auto;display:flex;flex-direction:column;gap:8px}
+.admin-badge{font-size:11px;padding:8px 10px;border-radius:9px;text-align:center;border:1px solid;
+  position:relative;overflow:hidden}
+.admin-badge.ok{color:var(--blue);border-color:rgba(61,139,255,.35);background:rgba(61,139,255,.08)}
+.admin-badge.warn{color:var(--purple);border-color:rgba(139,92,246,.35);background:rgba(139,92,246,.08);cursor:pointer}
+.admin-badge.err{color:var(--red);border-color:rgba(255,59,92,.35);background:rgba(255,59,92,.08);cursor:pointer}
+.version-line{font-size:10.5px;color:var(--faint);text-align:center;letter-spacing:.5px}
+.credit-line{font-size:10px;color:var(--faint);text-align:center;letter-spacing:.3px}
+.credit-line span{background:var(--grad);-webkit-background-clip:text;background-clip:text;
+  color:transparent;font-weight:700}
+
+/* ============================================================== контент ==== */
+.content{overflow-y:auto;padding:30px 34px 40px}
+.content::-webkit-scrollbar{width:10px}
+.content::-webkit-scrollbar-thumb{background:var(--stroke);border-radius:10px;border:3px solid var(--bg)}
+.view.hidden{display:none}
+/* короткая анимация появления содержимого при смене вкладки */
+.view.enter{animation:view-in .3s cubic-bezier(.2,.7,.3,1) both}
+@keyframes view-in{
+  from{opacity:0;transform:translateY(10px) scale(.995);filter:blur(3px)}
+  to{opacity:1;transform:none;filter:none}
+}
+/* элементы внутри вкладки подтягиваются каскадом — «сборка» интерфейса */
+.view.enter > *{animation:item-in .34s cubic-bezier(.2,.7,.3,1) both}
+.view.enter > *:nth-child(1){animation-delay:.02s}
+.view.enter > *:nth-child(2){animation-delay:.06s}
+.view.enter > *:nth-child(3){animation-delay:.1s}
+.view.enter > *:nth-child(4){animation-delay:.14s}
+.view.enter > *:nth-child(5){animation-delay:.18s}
+@keyframes item-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+
+.view-head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px;gap:16px}
+.eyebrow{font-size:10.5px;letter-spacing:3px;text-transform:uppercase;color:var(--faint);margin-bottom:7px}
+h1{font-size:30px;font-weight:800;letter-spacing:-.5px}
+.hint{color:var(--muted);font-size:13px;line-height:1.6;margin-bottom:20px;max-width:760px}
+.head-actions{display:flex;gap:10px}
+
+/* кнопки */
+button{font-family:var(--sans)}
+.primary{background:var(--grad);color:#fff;border:0;padding:11px 20px;border-radius:11px;
+  font-weight:650;font-size:13.5px;cursor:pointer;box-shadow:0 8px 24px rgba(109,63,214,.35);transition:.15s;
+  position:relative;overflow:hidden}
+.primary:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.primary:active{transform:translateY(0)}
+.ghost{background:var(--panel);color:var(--text);border:1px solid var(--stroke);padding:10px 18px;
+  border-radius:11px;font-size:13px;cursor:pointer;transition:.15s;position:relative;overflow:hidden}
+.ghost:hover{border-color:var(--purple);color:#fff}
+.mini{background:transparent;border:0;color:var(--faint);font-size:11px;cursor:pointer;
+  position:relative;overflow:hidden;border-radius:6px}
+.mini:hover{color:var(--text)}
+
+/* ============================================================ панель ======= */
+/* Регистрируем свойства: только так их можно плавно транзишить (иначе цвет ядра
+   и уровень энергии переключались бы рывком). */
+@property --core   { syntax:"<color>";  inherits:true; initial-value:#ff3b5c }
+@property --energy { syntax:"<number>"; inherits:true; initial-value:0 }
+
+.dash-grid{position:relative;display:grid;grid-template-columns:1fr 360px 1fr;
+  align-items:center;gap:22px;margin-bottom:22px}
+.stat-col{display:flex;flex-direction:column;gap:16px}
+
+/* ------------------------------------------------------------- реактор ----- */
+/* Состояние меняется ТОЛЬКО через --core / --energy и transition.
+   Keyframes крутятся непрерывно и никогда не перезапускаются → нет рывков. */
+.reactor{position:relative;width:360px;height:320px;justify-self:center;
+  --core:var(--red); --energy:0;
+  transition:--core .8s ease, --energy .8s ease}
+.reactor.on{--core:var(--blue); --energy:1}
+.reactor.pending{--core:var(--purple); --energy:.72}
+.reactor.off{--core:var(--red); --energy:0}
+.reactor.idle{--core:#6a6a82; --energy:0}
+
+/* ---- клешни-манипуляторы ---- */
+/* При выключении клешни чуть расходятся, будто разжимаются. Угол считается из
+   --energy, а он транзишится → движение плавное, без keyframes. */
+.rig{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
+.claw,.claw-tip,.tether{transform-box:view-box}
+.claw-l  {transform-origin:95px 254px;  transform:rotate(calc((1 - var(--energy)) * -7deg))}
+.claw-r  {transform-origin:265px 254px; transform:rotate(calc((1 - var(--energy)) *  7deg))}
+.claw-l2 {transform-origin:125px 254px; transform:rotate(calc((1 - var(--energy)) * -11deg))}
+.claw-r2 {transform-origin:235px 254px; transform:rotate(calc((1 - var(--energy)) *  11deg))}
+
+.claw{fill:url(#clawMetal);stroke:color-mix(in srgb, var(--core) 55%, #3a3a55);stroke-width:1;
+  filter:drop-shadow(0 0 6px color-mix(in srgb, var(--core) calc(var(--energy) * 55%), transparent))}
+.claw-inner{opacity:.55}
+.claw-tip{fill:#fff;opacity:calc(.18 + .82 * var(--energy));
+  filter:drop-shadow(0 0 7px var(--core))}
+.tether{stroke:var(--core);stroke-width:1.4;stroke-linecap:round;stroke-dasharray:3 5;
+  opacity:calc(.85 * var(--energy));                /* выключено — разрядов нет */
+  animation:tether-run 1.1s linear infinite}        /* сдвиг 8px = период штриха */
+@keyframes tether-run{from{stroke-dashoffset:0}to{stroke-dashoffset:-8px}}
+
+/* ---- сфера (она же кнопка питания) ---- */
+/* .orb    — посадка на клешни: чем меньше энергии, тем ниже ядро
+   .orb-float — левитация; амплитуда тоже зависит от энергии, поэтому
+   выключенное ядро замирает на манипуляторах, а не дёргается на них. */
+.orb{position:absolute;left:120px;top:58px;width:120px;height:120px;
+  padding:0;border:0;background:transparent;cursor:pointer;z-index:2;
+  transform:translateY(calc((1 - var(--energy)) * 22px))}
+.orb-float{position:absolute;inset:0;display:block;
+  animation:orb-levitate 5.6s ease-in-out infinite}
+@keyframes orb-levitate{
+  0%,100%{transform:translateY(calc(-5px * var(--energy)))}
+  50%    {transform:translateY(calc( 5px * var(--energy)))}
+}
+
+.orb-aura{position:absolute;inset:-48px;border-radius:50%;pointer-events:none;
+  clip-path:circle(50%);
+  background:radial-gradient(circle closest-side,
+    color-mix(in srgb, var(--core) 65%, #fff) 0%,
+    color-mix(in srgb, var(--core) 55%, transparent) 26%,
+    color-mix(in srgb, var(--purple) 22%, transparent) 50%,
+    transparent 78%);
+  opacity:calc(.12 + .55 * var(--energy));
+  filter:blur(6px);
+  animation:orb-aura 4.2s ease-in-out infinite}
+@keyframes orb-aura{0%,100%{transform:scale(1)}50%{transform:scale(1.09)}}
+
+/* clip-path + isolation: гарантированная круглая обрезка слоёв.
+   Одного border-radius + overflow мало — квадратные углы плазмы прорывались. */
+.orb-body{position:absolute;inset:0;display:block;border-radius:50%;
+  overflow:hidden;clip-path:circle(50%);isolation:isolate;
+  background:#0a0a12;
+  box-shadow:inset 0 0 30px -6px rgba(0,0,0,.9), 0 0 0 1px rgba(255,255,255,.12);
+  animation:orb-breathe 6.4s ease-in-out infinite;
+  filter:saturate(calc(.22 + .78 * var(--energy))) brightness(calc(.45 + .55 * var(--energy)));
+  transform:translateZ(0);will-change:transform}
+@keyframes orb-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.025)}}
+
+.orb:hover .orb-body{box-shadow:inset 0 0 30px -6px rgba(0,0,0,.9), 0 0 0 2px color-mix(in srgb, var(--core) 70%, #fff)}
+.orb:active .orb-aura{opacity:calc(.35 + .55 * var(--energy))}
+.orb:focus-visible{outline:2px solid var(--purple);outline-offset:8px;border-radius:50%}
+
+/* слои плазмы: без mix-blend-mode — именно он давал квадратные засветы */
+.l{position:absolute;inset:-30%;display:block;backface-visibility:hidden}
+.l-plasma-a{background:conic-gradient(from 0deg,
+    var(--red) 0%, var(--purple) 24%, var(--blue) 48%, var(--purple) 72%, var(--red-dim) 88%, var(--red) 100%);
+  filter:blur(13px);opacity:.95;animation:orb-spin 24s linear infinite}
+.l-plasma-b{background:conic-gradient(from 0deg,
+    transparent 0 5%, rgba(255,255,255,.55) 7%, transparent 10% 28%,
+    rgba(255,59,92,.75) 33%, transparent 37% 58%,
+    rgba(61,139,255,.7) 63%, transparent 67% 86%,
+    rgba(139,92,246,.65) 90%, transparent 94%);
+  filter:blur(9px);opacity:.55;animation:orb-spin-rev 36s linear infinite}
+.l-blob{background:radial-gradient(circle at 32% 30%, rgba(255,255,255,.8), rgba(139,92,246,.3) 22%, transparent 46%);
+  filter:blur(10px);opacity:.6;animation:orb-spin 15s linear infinite}
+.l-blob2{background:radial-gradient(circle at 70% 72%, rgba(61,139,255,.75), transparent 40%);
+  filter:blur(14px);opacity:.5;animation:orb-spin-rev 19s linear infinite}
+.l-motes{background-image:radial-gradient(rgba(255,255,255,.55) 1px, transparent 1.7px);
+  background-size:11px 11px;opacity:.15;animation:orb-spin 70s linear infinite}
+.l-shells{inset:0;background:repeating-radial-gradient(circle at 50% 50%,
+    transparent 0 8px, rgba(255,255,255,.14) 8px 9px);
+  animation:orb-shells 7s ease-in-out infinite}
+@keyframes orb-shells{0%,100%{transform:scale(1);opacity:.5}50%{transform:scale(1.07);opacity:.2}}
+.l-tint{inset:0;background:radial-gradient(circle closest-side,
+    color-mix(in srgb, var(--core) 45%, transparent) 0%, transparent 78%);opacity:.85}
+.l-shade{inset:0;background:radial-gradient(circle closest-side,
+    transparent 46%, rgba(6,6,12,.55) 78%, rgba(4,4,8,.94) 100%)}
+.l-spec{inset:0;background:radial-gradient(circle at 34% 27%,
+    rgba(255,255,255,.9) 0%, rgba(255,255,255,.28) 8%, transparent 30%);filter:blur(2px)}
+
+@keyframes orb-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+@keyframes orb-spin-rev{from{transform:rotate(360deg)}to{transform:rotate(0)}}
+
+/* ---- платформа-трапеция ---- */
+.platform{position:absolute;left:50%;bottom:0;transform:translateX(-50%);
+  width:278px;height:86px;z-index:1;
+  clip-path:polygon(15% 0%, 85% 0%, 100% 100%, 0% 100%);
+  background:linear-gradient(180deg,#242437 0%, var(--panel-2) 45%, #0d0d16 100%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding-top:8px;
+  filter:brightness(calc(.72 + .28 * var(--energy)))}
+.platform::before{content:"";position:absolute;left:15%;right:15%;top:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--core),transparent);
+  opacity:calc(.25 + .75 * var(--energy));
+  box-shadow:0 0 14px var(--core)}
+.pf-state{font-size:13.5px;font-weight:800;letter-spacing:1.6px;text-transform:uppercase;
+  color:var(--core);
+  text-shadow:0 0 14px color-mix(in srgb, var(--core) calc(var(--energy) * 80%), transparent)}
+.pf-strategy{font-family:var(--mono);font-size:11.5px;color:var(--muted);max-width:78%;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
+
+/* ---- искры заряда: ядро → карточки ---- */
+.beam-layer,.spark-layer{position:absolute;inset:0;pointer-events:none;overflow:visible;z-index:5}
+.beam{fill:none;stroke:url(#beamGrad);stroke-width:2;stroke-linecap:round;
+  filter:drop-shadow(0 0 5px rgba(139,92,246,.9))}
+.spark{position:absolute;top:0;left:0;width:11px;height:11px;margin:-5.5px 0 0 -5.5px;border-radius:50%;
+  background:radial-gradient(circle,#fff 0%, #d9d0ff 30%, rgba(139,92,246,.75) 55%, transparent 72%);
+  filter:drop-shadow(0 0 9px var(--purple));offset-rotate:0deg}
+.spark.trail{opacity:.45;filter:blur(2px) drop-shadow(0 0 6px var(--blue))}
+.impact-ring{position:absolute;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;
+  border:2px solid var(--blue);box-shadow:0 0 18px rgba(61,139,255,.9)}
+
+/* --------------------------------------------------------- карточки-статы -- */
+.stat{background:var(--panel);border:1px solid var(--stroke);border-radius:var(--radius-sm);
+  padding:18px;display:flex;flex-direction:column;gap:8px;position:relative;overflow:hidden;
+  transition:border-color .4s ease, box-shadow .5s ease, transform .4s ease}
+.stat::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--faint)}
+.stat.on::before{background:var(--blue)} .stat.off::before{background:var(--red)}
+.stat.neutral::before{background:var(--purple)}
+.stat-label{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--faint)}
+.stat-val{font-size:19px;font-weight:700;font-family:var(--mono)}
+.stat.on .stat-val{color:var(--blue)} .stat.off .stat-val{color:var(--red)}
+.stat.neutral .stat-val{color:var(--purple)}
+/* прилёт искры — карточка «заряжается» */
+.stat.charged{animation:stat-charged .9s cubic-bezier(.22,.7,.25,1)}
+@keyframes stat-charged{
+  0%  {box-shadow:0 0 0 0 rgba(139,92,246,0)}
+  18% {box-shadow:0 0 34px -4px rgba(139,92,246,.75), inset 0 0 24px -8px rgba(61,139,255,.6);
+       border-color:var(--purple);transform:translateY(-2px) scale(1.015)}
+  100%{box-shadow:0 0 0 0 rgba(139,92,246,0);transform:none}
+}
+
+.console-block{background:#08080e;border:1px solid var(--stroke);border-radius:var(--radius);overflow:hidden}
+.console-head{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;
+  border-bottom:1px solid var(--stroke)}
+.console{font-family:var(--mono);font-size:12px;line-height:1.65;color:#b9b9d6;padding:14px 16px;
+  height:180px;overflow-y:auto;white-space:pre-wrap;-webkit-user-select:text;user-select:text}
+.console::-webkit-scrollbar{width:8px}.console::-webkit-scrollbar-thumb{background:var(--stroke);border-radius:8px}
+
+/* ============================================================ стратегии ==== */
+.strategy-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.strategy{background:var(--panel);border:1px solid var(--stroke);border-radius:var(--radius-sm);
+  padding:16px 18px;display:flex;flex-direction:column;gap:14px;transition:.15s}
+.strategy:hover{border-color:var(--purple)}
+.strategy.active{border-color:var(--blue);box-shadow:0 0 0 1px var(--blue) inset}
+.strategy-name{font-family:var(--mono);font-size:13.5px;font-weight:600;word-break:break-word}
+.strategy-badge{font-size:10px;color:var(--blue);letter-spacing:1px;text-transform:uppercase}
+.strategy-actions{display:flex;gap:8px}
+.strategy-actions button{flex:1;font-size:12px;padding:8px}
+
+/* =============================================================== списки ==== */
+.seg{display:inline-flex;background:var(--panel);border:1px solid var(--stroke);border-radius:11px;padding:3px;gap:2px}
+.seg-btn{background:transparent;border:0;color:var(--muted);padding:8px 15px;border-radius:8px;
+  font-size:12.5px;cursor:pointer;transition:.14s;position:relative;overflow:hidden}
+.seg-btn:hover{color:var(--text)}
+.seg-btn.active{color:#fff;background:var(--grad);box-shadow:0 4px 14px rgba(109,63,214,.35)}
+
+.add-row{display:flex;gap:10px;margin-bottom:20px;max-width:640px}
+.add-row input{flex:1}
+input[type=text]{background:var(--panel);border:1px solid var(--stroke);border-radius:11px;
+  padding:12px 15px;color:var(--text);font-size:13.5px;font-family:var(--sans);-webkit-user-select:text;user-select:text}
+input[type=text]:focus{outline:none;border-color:var(--purple);box-shadow:0 0 0 3px rgba(139,92,246,.15)}
+
+.chip-list{display:flex;flex-wrap:wrap;gap:9px;align-content:flex-start}
+.chip{display:flex;align-items:center;gap:9px;background:var(--panel);border:1px solid var(--stroke);
+  border-radius:9px;padding:8px 10px 8px 13px;font-family:var(--mono);font-size:12.5px}
+.chip .x{width:18px;height:18px;border-radius:6px;display:grid;place-items:center;cursor:pointer;
+  color:var(--faint);background:var(--panel-2);font-size:14px;line-height:1;position:relative;overflow:hidden}
+.chip .x:hover{background:var(--red);color:#fff}
+.chip.bypass{border-left:3px solid var(--blue)}
+.chip.exclude{border-left:3px solid var(--red)}
+.chip.ipexclude{border-left:3px solid var(--purple)}
+
+/* ============================================================ диагностика == */
+.diag-list{display:flex;flex-direction:column;gap:10px}
+.diag-item{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--stroke);
+  border-radius:var(--radius-sm);padding:15px 18px}
+.diag-item .icon{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+.diag-item.ok .icon{background:var(--blue);box-shadow:0 0 12px var(--blue)}
+.diag-item.warn .icon{background:var(--purple);box-shadow:0 0 12px var(--purple)}
+.diag-item.error .icon{background:var(--red);box-shadow:0 0 12px var(--red)}
+.diag-item .body{flex:1}
+.diag-item .d-name{font-weight:650;font-size:13.5px;margin-bottom:3px}
+.diag-item .d-msg{font-size:12.5px;color:var(--muted);line-height:1.5}
+.diag-item .fix{background:var(--panel-2);border:1px solid var(--stroke);color:var(--purple);
+  padding:8px 14px;border-radius:9px;font-size:12px;cursor:pointer;position:relative;overflow:hidden}
+.diag-item .fix:hover{border-color:var(--purple);color:#fff}
+.empty{color:var(--faint);font-size:13px;padding:40px;text-align:center;border:1px dashed var(--stroke);border-radius:var(--radius)}
+
+/* ============================================================ обновления === */
+.update-card{display:flex;align-items:center;justify-content:space-between;gap:16px;
+  background:var(--panel);border:1px solid var(--stroke);border-radius:var(--radius);padding:20px 22px;margin-bottom:16px}
+.update-info h3{font-size:15px;margin-bottom:5px}
+.update-info p{font-size:12.5px;color:var(--muted);line-height:1.5;max-width:520px}
+.update-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.update-row .update-card{margin-bottom:0}
+
+.dropzone{border:2px dashed var(--stroke);border-radius:var(--radius);padding:34px;text-align:center;
+  margin-bottom:16px;transition:.18s;background:rgba(139,92,246,.03)}
+.dropzone.hot{border-color:var(--purple);background:rgba(139,92,246,.1)}
+.dropzone h3{font-size:16px;margin-bottom:6px}
+.dropzone p{font-size:12.5px;color:var(--muted);max-width:520px;margin:0 auto 16px;line-height:1.55}
+.dropzone-orb{width:48px;height:48px;border-radius:14px;margin:0 auto 16px;background:var(--grad);
+  box-shadow:0 8px 26px rgba(139,92,246,.45);position:relative}
+.dropzone-orb::after{content:"↓";position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-size:22px;font-weight:800}
+
+/* ============================================================= настройки === */
+.setting{display:flex;align-items:center;justify-content:space-between;gap:16px;
+  background:var(--panel);border:1px solid var(--stroke);border-radius:var(--radius);padding:20px 22px;margin-bottom:14px}
+.setting-text h3{font-size:14.5px;margin-bottom:5px}
+.setting-text p{font-size:12.5px;color:var(--muted);line-height:1.5;max-width:520px}
+
+.switch{position:relative;width:50px;height:28px;flex-shrink:0}
+.switch input{display:none}
+.slider{position:absolute;inset:0;background:var(--panel-2);border:1px solid var(--stroke);border-radius:20px;transition:.18s;cursor:pointer}
+.slider::before{content:"";position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;background:var(--faint);transition:.18s}
+.switch input:checked + .slider{background:var(--grad);border-color:transparent}
+.switch input:checked + .slider::before{transform:translateX(22px);background:#fff}
+
+/* ============================================================= overlay ===== */
+.drop-overlay{position:fixed;inset:0;z-index:100;display:none;place-items:center;
+  background:rgba(11,11,18,.85);backdrop-filter:blur(6px)}
+.drop-overlay.show{display:grid}
+.drop-card{text-align:center}
+.drop-card h2{font-size:26px;margin-bottom:8px}
+.drop-card p{color:var(--muted);font-size:14px}
+.drop-orb{width:80px;height:80px;border-radius:24px;margin:0 auto 22px;background:var(--grad);
+  box-shadow:0 12px 46px rgba(139,92,246,.6);animation:float 2s ease-in-out infinite}
+@keyframes float{50%{transform:translateY(-10px)}}
+
+/* =============================================================== toast ===== */
+.toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(30px);
+  background:var(--panel-2);border:1px solid var(--stroke);color:var(--text);padding:13px 22px;
+  border-radius:12px;font-size:13.5px;opacity:0;pointer-events:none;transition:.25s;z-index:120;
+  box-shadow:0 12px 40px rgba(0,0,0,.5)}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.ok{border-left:3px solid var(--blue)}
+.toast.err{border-left:3px solid var(--red)}
+.toast.info{border-left:3px solid var(--purple)}
+
+@media (max-width:980px){
+  .dash-grid{grid-template-columns:1fr;justify-items:center}
+  .stat-col{width:100%;flex-direction:row}
+  .stat-col .stat{flex:1}
+  .update-row{grid-template-columns:1fr}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .orb-float,.orb-aura,.orb-body,.l,.tether{animation:none!important}
+}
+
+/* ==================================================== эффект свечения ===== */
+/* Волна свечения при клике, в духе Windows 11 — растекается из точки нажатия
+   и гаснет. Добавляется динамически из app.js на интерактивные элементы. */
+.ripple-effect{position:absolute;border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle, rgba(255,255,255,.55) 0%, rgba(139,92,246,.38) 45%, rgba(139,92,246,0) 72%);
+  transform:scale(0);opacity:.85;animation:ripple-anim .62s ease-out forwards;z-index:0}
+@keyframes ripple-anim{to{transform:scale(1);opacity:0}}
+

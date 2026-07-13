@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zapret Control</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="tunnel-line"></div>
+
+  <!-- overlay для перетаскивания zip -->
+  <div id="dropOverlay" class="drop-overlay">
+    <div class="drop-card">
+      <div class="drop-orb"></div>
+      <h2>Отпустите архив</h2>
+      <p>Новая версия Zapret будет распакована и подхвачена автоматически</p>
+    </div>
+  </div>
+
+  <div class="app">
+    <!-- боковая навигация -->
+    <aside class="sidebar">
+      <div class="brand">
+        <img class="brand-mark" src="../assets/logo-sidebar.png" alt="Zapret Control Panel" />
+        <div class="brand-text">
+          <span class="brand-name">ZAPRET</span>
+          <span class="brand-sub">control panel</span>
+        </div>
+      </div>
+      <nav class="nav">
+        <div class="nav-category">Приложение</div>
+        <button class="nav-item active" data-view="dashboard"><span class="tree">╔═</span>панель</button>
+        <button class="nav-item" data-view="strategies"><span class="tree">╠═</span>стратегии</button>
+        <button class="nav-item" data-view="lists"><span class="tree">╠═</span>домены-и-списки</button>
+        <button class="nav-item" data-view="diagnostics"><span class="tree">╠═</span>диагностика</button>
+        <button class="nav-item" data-view="updates"><span class="tree">╠═</span>обновления</button>
+        <button class="nav-item" data-view="settings"><span class="tree">╚═</span>настройки</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div id="adminBadge" class="admin-badge warn">Проверка прав…</div>
+        <div class="version-line" id="versionLine">версия —</div>
+        <div class="credit-line">made by <span>_SAMOREZ_</span></div>
+      </div>
+    </aside>
+
+    <!-- рабочая область -->
+    <main class="content">
+
+      <!-- ПАНЕЛЬ -->
+      <section class="view" data-view="dashboard">
+        <header class="view-head">
+          <div>
+            <div class="eyebrow">состояние обхода</div>
+            <h1 id="stateTitle">Загрузка…</h1>
+          </div>
+          <button class="ghost" id="openFolderBtn">Открыть папку</button>
+        </header>
+
+        <div class="dash-grid" id="dashGrid">
+          <div class="stat-col">
+            <div class="stat" id="statWinws"><span class="stat-label">winws.exe</span><span class="stat-val">—</span></div>
+            <div class="stat" id="statService"><span class="stat-label">служба zapret</span><span class="stat-val">—</span></div>
+          </div>
+
+          <!-- ========================= РЕАКТОР ========================= -->
+          <div class="reactor idle" id="reactor">
+            <!-- каркас: клешни-манипуляторы -->
+            <svg class="rig" viewBox="0 0 360 320" aria-hidden="true">
+              <defs>
+                <linearGradient id="clawMetal" x1="0" y1="1" x2="0" y2="0">
+                  <stop offset="0%"   stop-color="#14141f" />
+                  <stop offset="55%"  stop-color="#2c2c44" />
+                  <stop offset="100%" stop-color="#75759f" />
+                </linearGradient>
+                <linearGradient id="beamGrad" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%"   stop-color="#ffffff" stop-opacity="0" />
+                  <stop offset="35%"  stop-color="#8b5cf6" />
+                  <stop offset="100%" stop-color="#3d8bff" />
+                </linearGradient>
+              </defs>
+
+              <path class="claw claw-l" d="M78 254 C 84 214, 98 184, 126 158 C 116 192, 110 222, 106 254 Z" />
+              <path class="claw claw-inner claw-l2" d="M116 254 C 120 228, 130 208, 148 190 C 141 214, 136 234, 134 254 Z" />
+              <path class="claw claw-r" d="M282 254 C 276 214, 262 184, 234 158 C 244 192, 250 222, 254 254 Z" />
+              <path class="claw claw-inner claw-r2" d="M244 254 C 240 228, 230 208, 212 190 C 219 214, 224 234, 226 254 Z" />
+
+              <circle class="claw-tip claw-l" cx="126" cy="158" r="2.6" />
+              <circle class="claw-tip claw-r" cx="234" cy="158" r="2.6" />
+              <circle class="claw-tip claw-l2" cx="148" cy="190" r="1.8" />
+              <circle class="claw-tip claw-r2" cx="212" cy="190" r="1.8" />
+
+              <path class="tether claw-l" d="M126 158 L 140 150" />
+              <path class="tether claw-r" d="M234 158 L 220 150" style="animation-delay:-.55s" />
+            </svg>
+
+            <!-- сфера = кнопка питания -->
+            <button class="orb" id="powerBtn" aria-label="Включить или выключить обход">
+              <span class="orb-float">
+                <span class="orb-aura"></span>
+                <span class="orb-body">
+                  <span class="l l-plasma-a"></span>
+                  <span class="l l-plasma-b"></span>
+                  <span class="l l-blob"></span>
+                  <span class="l l-blob2"></span>
+                  <span class="l l-motes"></span>
+                  <span class="l l-shells"></span>
+                  <span class="l l-tint"></span>
+                  <span class="l l-shade"></span>
+                  <span class="l l-spec"></span>
+                </span>
+              </span>
+            </button>
+
+            <!-- платформа-трапеция с надписями -->
+            <div class="platform">
+              <div class="pf-state" id="statusText">Проверка…</div>
+              <div class="pf-strategy" id="coreStrategy">стратегия не выбрана</div>
+            </div>
+          </div>
+          <!-- =========================================================== -->
+
+          <div class="stat-col">
+            <div class="stat" id="statDivert"><span class="stat-label">WinDivert</span><span class="stat-val">—</span></div>
+            <div class="stat" id="statGame"><span class="stat-label">игровой фильтр</span><span class="stat-val">—</span></div>
+          </div>
+
+          <!-- слои для искр заряда -->
+          <svg class="beam-layer" id="beamLayer"></svg>
+          <div class="spark-layer" id="sparkLayer"></div>
+        </div>
+
+        <div class="console-block">
+          <div class="console-head"><span class="eyebrow">журнал</span><button class="mini" id="clearLog">очистить</button></div>
+          <pre id="log" class="console"></pre>
+        </div>
+      </section>
+
+      <!-- СТРАТЕГИИ -->
+      <section class="view hidden" data-view="strategies">
+        <header class="view-head">
+          <div><div class="eyebrow">выбор обхода</div><h1>Стратегии</h1></div>
+        </header>
+        <p class="hint">Каждая стратегия — это набор параметров winws. Запустите как процесс для теста или установите как службу, чтобы обход работал после перезагрузки.</p>
+        <div id="strategyList" class="strategy-list"></div>
+      </section>
+
+      <!-- СПИСКИ -->
+      <section class="view hidden" data-view="lists">
+        <header class="view-head">
+          <div><div class="eyebrow">домены и адреса</div><h1>Списки</h1></div>
+          <div class="seg" id="listTabs">
+            <button class="seg-btn active" data-list="bypass">В обход</button>
+            <button class="seg-btn" data-list="exclude">В исключения</button>
+            <button class="seg-btn" data-list="ipexclude">IP-исключения</button>
+          </div>
+        </header>
+        <p class="hint" id="listHint"></p>
+        <div class="add-row">
+          <input id="listInput" type="text" placeholder="example.com, можно несколько через запятую" />
+          <button class="primary" id="listAddBtn">Добавить</button>
+        </div>
+        <div id="listItems" class="chip-list"></div>
+      </section>
+
+      <!-- ДИАГНОСТИКА -->
+      <section class="view hidden" data-view="diagnostics">
+        <header class="view-head">
+          <div><div class="eyebrow">проверка окружения</div><h1>Диагностика</h1></div>
+          <div class="head-actions">
+            <button class="ghost" id="clearDiscordBtn">Очистить кэш Discord</button>
+            <button class="primary" id="runDiagBtn">Запустить проверку</button>
+          </div>
+        </header>
+        <div id="diagResults" class="diag-list">
+          <div class="empty">Нажмите «Запустить проверку», чтобы найти конфликты и проблемы.</div>
+        </div>
+      </section>
+
+      <!-- ОБНОВЛЕНИЯ -->
+      <section class="view hidden" data-view="updates">
+        <header class="view-head">
+          <div><div class="eyebrow">версии и списки</div><h1>Обновления</h1></div>
+        </header>
+
+        <div class="update-card">
+          <div class="update-info">
+            <h3>Версия Zapret</h3>
+            <p id="updVersionText">Проверьте наличие новой версии на GitHub.</p>
+          </div>
+          <button class="primary" id="checkAppBtn">Проверить</button>
+        </div>
+
+        <div class="dropzone" id="dropZone">
+          <div class="dropzone-orb"></div>
+          <h3>Обновление из архива</h3>
+          <p>Перетащите сюда zip новой версии — или выберите файл. Ваши списки и настройки перенесутся автоматически.</p>
+          <button class="ghost" id="pickZipBtn">Выбрать zip</button>
+        </div>
+
+        <div class="update-row">
+          <div class="update-card">
+            <div class="update-info"><h3>IPSet-список</h3><p>Свежий список подсетей для обхода по IP.</p></div>
+            <button class="ghost" id="updIpsetBtn">Обновить</button>
+          </div>
+          <div class="update-card">
+            <div class="update-info"><h3>Файл hosts</h3><p>Проверить и обновить системный hosts.</p></div>
+            <button class="ghost" id="updHostsBtn">Проверить</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- НАСТРОЙКИ -->
+      <section class="view hidden" data-view="settings">
+        <header class="view-head">
+          <div><div class="eyebrow">параметры</div><h1>Настройки</h1></div>
+        </header>
+
+        <div class="setting">
+          <div class="setting-text"><h3>Папка Zapret</h3><p id="pathText">не выбрана</p></div>
+          <button class="ghost" id="pickFolderBtn">Указать папку</button>
+        </div>
+
+        <div class="setting">
+          <div class="setting-text"><h3>Игровой фильтр</h3><p>Расширяет обход на игровые порты (TCP/UDP).</p></div>
+          <div class="seg" id="gameSeg">
+            <button class="seg-btn" data-game="off">Выкл</button>
+            <button class="seg-btn" data-game="all">TCP+UDP</button>
+            <button class="seg-btn" data-game="tcp">TCP</button>
+            <button class="seg-btn" data-game="udp">UDP</button>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting-text"><h3>IPSet-фильтр</h3><p>loaded — по списку, none — выключен, any — весь трафик.</p></div>
+          <div class="seg" id="ipsetSeg">
+            <button class="seg-btn" data-ipset="loaded">Loaded</button>
+            <button class="seg-btn" data-ipset="none">None</button>
+            <button class="seg-btn" data-ipset="any">Any</button>
+          </div>
+        </div>
+
+        <div class="setting">
+          <div class="setting-text"><h3>Проверять обновления</h3><p>Автопроверка новой версии при запуске.</p></div>
+          <label class="switch"><input type="checkbox" id="autoUpdate" /><span class="slider"></span></label>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
