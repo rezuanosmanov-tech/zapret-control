@@ -524,8 +524,346 @@ async function applyZip(zipPath) {
   return { ok: true, version: versionName, path: dest };
 }
 
+// ============================================================ тесты ===========
+/*
+ * Оба режима перебирают конфиги — разница в глубине проверки:
+ *   • Стандартный — базовый набор целей (YouTube + Discord), быстро.
+ *   • DPI Check   — полный набор: плюс Cloudflare, Twitch, соцсети и прочее,
+ *                   что обычно режет DPI. Дольше, зато видно всю картину.
+ *
+ * Перед началом обход принудительно выключается, иначе первый конфиг тестировался
+ * бы поверх уже работающей службы и результат был бы грязным. После теста прежнее
+ * состояние восстанавливается: человек не должен уйти с тестового winws вместо
+ * своей службы и обнаружить пропажу обхода после перезагрузки.
+ */
+const https = require('https');
+
+const TARGETS = [
+  // --- базовый набор (участвует в обоих режимах) ---
+  { host: 'www.youtube.com', group: 'YouTube', tier: 'basic',
+    desc: 'Главная страница YouTube. Если не открывается — блокируется сам сайт, а не видео.' },
+  { host: 'redirector.googlevideo.com', group: 'YouTube', tier: 'basic',
+    desc: 'Раздаёт адреса видеосерверов. Когда страница грузится, а видео вечно буферизует — виноват обычно он.' },
+  { host: 'i.ytimg.com', group: 'YouTube', tier: 'basic',
+    desc: 'Превью роликов. Не работает — YouTube выглядит как страница без картинок.' },
+  { host: 'discord.com', group: 'Discord', tier: 'basic',
+    desc: 'Основной сайт и вход в аккаунт Discord.' },
+  { host: 'gateway.discord.gg', group: 'Discord', tier: 'basic',
+    desc: 'Постоянное соединение с Discord. Без него клиент висит на «Подключение…» и чат не приходит.' },
+  { host: 'cdn.discordapp.com', group: 'Discord', tier: 'basic',
+    desc: 'Файлы, аватарки и вложения Discord. Не грузится — сообщения есть, а картинок нет.' },
+
+  // --- расширенный набор (только DPI Check) ---
+  { host: 'media.discordapp.net', group: 'Discord', tier: 'full',
+    desc: 'Картинки и превью в чатах Discord, отдельный от CDN адрес.' },
+  { host: 'www.cloudflare.com', group: 'Cloudflare', tier: 'full',
+    desc: 'Cloudflare обслуживает огромную часть интернета. Его блокировка ломает тысячи сайтов разом.' },
+  { host: 'cdnjs.cloudflare.com', group: 'Cloudflare', tier: 'full',
+    desc: 'Библиотеки скриптов с Cloudflare. Не работает — многие сайты открываются «сломанными».' },
+  { host: 'speed.cloudflare.com', group: 'Cloudflare', tier: 'full',
+    desc: 'Проверка скорости Cloudflare. Хороший индикатор того, как DPI обходится с TLS.' },
+  { host: 'www.twitch.tv', group: 'Twitch', tier: 'full',
+    desc: 'Twitch — стриминговый сервис, часто попадает под те же фильтры, что и YouTube.' },
+  { host: 'static-cdn.jtvnw.net', group: 'Twitch', tier: 'full',
+    desc: 'Раздача превью и видеопотоков Twitch.' },
+  { host: 'x.com', group: 'Соцсети', tier: 'full',
+    desc: 'X (бывший Twitter).' },
+  { host: 'www.instagram.com', group: 'Соцсети', tier: 'full',
+    desc: 'Instagram.' },
+  { host: 'steamcommunity.com', group: 'Игры', tier: 'full',
+    desc: 'Сообщество Steam: профили, обсуждения, торговая площадка.' },
+  { host: 'open.spotify.com', group: 'Музыка', tier: 'full',
+    desc: 'Spotify. Полезен как проверка обычного TLS-трафика, не связанного с видео.' },
+];
+
+const targetsFor = (mode) => TARGETS.filter(t => mode === 'dpi' || t.tier === 'basic');
+
+/*
+ * Сколько ждём после запуска winws, прежде чем проверять. Драйвер WinDivert
+ * поднимается не мгновенно, и если начать пробы раньше — стратегия покажет 0 из 6
+ * не потому, что плохая, а потому, что перехват ещё не встал. На медленных машинах
+ * можно поднять до 4000.
+ */
+const WINWS_WARMUP = 3000;
+
+let testAbort = false;
+let testBusy = false;
+
+const delay = (ms) => new Promise(r => setTimeout(r, ms));
+const emit = (type, data) => { if (mainWindow) mainWindow.webContents.send('test:event', { type, ...data }); };
+
+/*
+ * Одна проба. Важен не ответ, а сам факт, что TLS-хендшейк прошёл: DPI обычно
+ * рвёт соединение (ECONNRESET) или молча топит его в таймауте. Сертификаты не
+ * проверяем — нас интересует только проходимость канала.
+ */
+function probe(host, timeout = 6000) {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const req = https.request({
+      host, port: 443, path: '/', method: 'HEAD', timeout,
+      rejectUnauthorized: false,
+      headers: { 'User-Agent': 'Mozilla/5.0', Connection: 'close' },
+    }, (res) => {
+      res.resume();
+      resolve({ ok: true, ms: Date.now() - t0, code: res.statusCode });
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', (e) => resolve({ ok: false, ms: Date.now() - t0, error: e.code || e.message || 'error' }));
+    req.end();
+  });
+}
+
+async function runProbes(label, targets) {
+  const results = [];
+  for (const t of targets) {
+    if (testAbort) break;
+    emit('probe', { config: label, host: t.host, group: t.group, state: 'run' });
+    const r = await probe(t.host);
+    results.push({ host: t.host, group: t.group, ...r });
+    emit('probe', { config: label, host: t.host, group: t.group, state: r.ok ? 'ok' : 'fail', ms: r.ms, error: r.error });
+  }
+  const ok = results.filter(r => r.ok);
+  return {
+    results,
+    okCount: ok.length,
+    total: results.length,
+    avg: ok.length ? Math.round(ok.reduce((s, r) => s + r.ms, 0) / ok.length) : 0,
+    score: results.length ? Math.round(ok.length / results.length * 100) : 0,
+  };
+}
+
+/* Общий перебор для обоих режимов. */
+async function runSweep(mode, batList, withBaseline = true) {
+  if (testBusy) return { busy: true };
+  testBusy = true; testAbort = false;
+
+  const targets = targetsFor(mode);
+  const before = await getStatus();
+  const restore = before.serviceInstalled ? before.strategy : null;
+  const out = [];
+
+  try {
+    const steps = batList.length + (withBaseline ? 1 : 0);
+    emit('start', { mode, total: steps, targets });
+
+    // Чистый старт: гасим всё, что уже работает, иначе первый конфиг проверялся
+    // бы поверх активной службы.
+    log('Тест: выключаю обход для чистой проверки…');
+    emit('phase', { text: 'Выключаю обход для чистой проверки…' });
+    await stopEverything();
+    await delay(900);
+
+    if (withBaseline && !testAbort) {
+      emit('config', { bat: '__baseline__', label: 'без обхода', state: 'run', index: 0, total: steps });
+      const r = await runProbes('__baseline__', targets);
+      out.push({ bat: '__baseline__', label: 'без обхода', baseline: true, ...r });
+      emit('config', { bat: '__baseline__', label: 'без обхода', state: 'done', index: 0, total: steps, ...r });
+    }
+
+    for (let i = 0; i < batList.length; i++) {
+      if (testAbort) break;
+      const bat = batList[i];
+      const idx = i + (withBaseline ? 1 : 0);
+      emit('config', { bat, label: bat, state: 'run', index: idx, total: steps });
+      await startProcess(bat);
+      await delay(WINWS_WARMUP);       // даём WinDivert подняться и перехватить трафик
+      const r = await runProbes(bat, targets);
+      out.push({ bat, label: bat, ...r });
+      emit('config', { bat, label: bat, state: 'done', index: idx, total: steps, ...r });
+    }
+  } finally {
+    emit('phase', { text: 'Возвращаю прежние настройки…' });
+    await stopEverything();
+    if (restore) {
+      log('Восстанавливаю прежнюю службу: ' + restore);
+      await installService(restore.endsWith('.bat') ? restore : restore + '.bat');
+    }
+    testBusy = false;
+  }
+
+  const real = out.filter(r => !r.baseline);
+  const best = real.slice().sort((a, b) => b.okCount - a.okCount || a.avg - b.avg)[0] || null;
+  const bestBat = best && best.okCount > 0 ? best.bat : null;
+
+  let file = null;
+  if (out.length) file = await saveReport(mode, { results: out, best: bestBat });
+
+  emit('done', { mode, aborted: testAbort, best: bestBat, file });
+  return { results: out, best: bestBat, aborted: testAbort, file };
+}
+
+// ------------------------------------------------------- отчёт (один файл) ----
+/*
+ * Все прогоны дописываются в ОДИН файл рядом с папкой core. Если корень
+ * недоступен для записи (приложение утащили в Program Files) — уходим в userData,
+ * чтобы тест не падал из-за невозможности сохранить отчёт.
+ */
+function testResultsFile() {
+  const near = path.join(__dirname, '..', 'Test results.txt');
+  try {
+    fs.appendFileSync(near, '');
+    return near;
+  } catch {
+    return path.join(app.getPath('userData'), 'Test results.txt');
+  }
+}
+
+function stampHuman(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+async function saveReport(mode, { results, best }) {
+  const file = testResultsFile();
+  const st = await getStatus().catch(() => ({}));
+  const L = [];
+
+  L.push('');
+  L.push('='.repeat(70));
+  L.push(`  ТЕСТ ${stampHuman(new Date())}   —   ${mode === 'dpi' ? 'DPI Check (полная проверка)' : 'Стандартный тест'}`);
+  L.push(`  Версия Zapret: ${st.version || '—'}`);
+  L.push('='.repeat(70));
+  L.push('');
+
+  const sorted = results.slice().sort((a, b) => {
+    if (a.baseline) return 1;              // база сравнения — в самый низ
+    if (b.baseline) return -1;
+    return b.okCount - a.okCount || a.avg - b.avg;
+  });
+
+  L.push(`  ${'Стратегия'.padEnd(34)} ${'Пробы'.padEnd(8)} ${'Задержка'.padEnd(10)} Оценка`);
+  L.push('  ' + '-'.repeat(66));
+  for (const r of sorted) {
+    const name = (r.baseline ? '— без обхода —' : r.bat.replace(/\.bat$/i, '')).slice(0, 33);
+    const mark = (!r.baseline && r.bat === best) ? '   <-- ЛУЧШАЯ' : '';
+    L.push(`  ${name.padEnd(34)} ${`${r.okCount}/${r.total}`.padEnd(8)} ${(r.avg ? r.avg + ' мс' : '—').padEnd(10)} ${r.score}%${mark}`);
+  }
+  L.push('');
+  L.push(best
+    ? `  РЕКОМЕНДУЕТСЯ: ${best.replace(/\.bat$/i, '')}`
+    : '  Рабочих стратегий не найдено. Загляните во вкладку «Диагностика».');
+  L.push('');
+  L.push('  Подробности по каждой стратегии:');
+  for (const r of sorted) {
+    L.push('');
+    L.push(`  ${r.baseline ? '— без обхода —' : r.bat.replace(/\.bat$/i, '')}  (${r.okCount}/${r.total}, ${r.score}%)`);
+    for (const pr of r.results) {
+      const mark = pr.ok ? '[ OK ]' : '[FAIL]';
+      const tail = pr.ok ? `${pr.ms} мс` : (pr.error || 'нет связи');
+      L.push(`    ${mark} ${pr.host.padEnd(32)} ${tail}`);
+    }
+  }
+  L.push('');
+
+  const head = fs.existsSync(file) && fs.statSync(file).size > 0
+    ? ''
+    : '\uFEFF ZAPRET CONTROL — журнал тестов\r\n Каждый новый тест дописывается снизу.\r\n';
+
+  // CRLF и BOM: иначе «Блокнот» слепит всё в одну строку и покажет кракозябры.
+  fs.appendFileSync(file, head + L.join('\r\n') + '\r\n', 'utf8');
+  log('Отчёт дописан в: ' + file);
+  emit('saved', { file });
+  return file;
+}
+
+// ======================================================== автозагрузка ========
+/*
+ * Автозапуск делаем через Планировщик задач, а НЕ через ключ реестра Run.
+ * Причина: приложению нужны права администратора (оно ставит службу). Запись в
+ * Run стартует процесс без прав, тот дёргает autoElevate() — и пользователь при
+ * каждом входе в Windows ловит окно UAC. Задача с RunLevel=HighestAvailable
+ * поднимается сразу с правами и молча.
+ *
+ * Флаг --hidden говорит окну не показываться: приложение садится в трей.
+ */
+const TASK_NAME = 'Zapret Control Autostart';
+
+// В dev это electron.exe + путь к папке core; в упакованном виде — сам exe.
+function autostartCmd() {
+  const exe = process.execPath;
+  const packaged = app.isPackaged;
+  return {
+    exe,
+    args: packaged ? '--hidden' : `"${app.getAppPath()}" --hidden`,
+    dir: packaged ? path.dirname(exe) : app.getAppPath(),
+  };
+}
+
+async function autostartGet() {
+  const r = await run(`schtasks /query /tn "${TASK_NAME}"`);
+  return { enabled: r.code === 0 && !/ERROR|не найден|cannot find/i.test(r.stdout + r.stderr) };
+}
+
+async function autostartSet(on) {
+  if (!on) {
+    await run(`schtasks /delete /tn "${TASK_NAME}" /f`);
+    log('Автозагрузка отключена.');
+    return autostartGet();
+  }
+
+  const { exe, args, dir } = autostartCmd();
+  const user = `${process.env.USERDOMAIN || os.hostname()}\\${process.env.USERNAME || os.userInfo().username}`;
+
+  // Через XML, а не через /tr: только так можно задать рабочую папку и уровень
+  // прав, а кавычки внутри /tr на путях с пробелами разбираются криво.
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const xml = `<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Автозапуск Zapret Control в трее при входе в Windows</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>${esc(user)}</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>${esc(user)}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>${esc(exe)}</Command>
+      <Arguments>${esc(args)}</Arguments>
+      <WorkingDirectory>${esc(dir)}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>`;
+
+  // Планировщик требует UTF-16 LE с BOM — иначе ругается на кодировку.
+  const tmp = path.join(app.getPath('temp'), 'zapret-control-task.xml');
+  fs.writeFileSync(tmp, '\uFEFF' + xml, 'utf16le');
+
+  const r = await run(`schtasks /create /tn "${TASK_NAME}" /xml "${tmp}" /f`);
+  fs.rmSync(tmp, { force: true });
+
+  if (r.code !== 0) {
+    log('Не удалось создать задачу автозагрузки: ' + (r.stdout + r.stderr).trim());
+    throw new Error('Не удалось создать задачу. Нужны права администратора.');
+  }
+  log('Автозагрузка включена: приложение будет стартовать в трее.');
+  return autostartGet();
+}
+
 // ------------------------------------------------------------------ окно ------
 let tray = null;
+const startHidden = process.argv.includes('--hidden');
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -535,7 +873,8 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  // При старте из автозагрузки окно не показываем — приложение сразу в трее.
+  mainWindow.once('ready-to-show', () => { if (!startHidden) mainWindow.show(); });
 
   // Закрытие окна (крестик) сворачивает в трей, а не завершает приложение.
   // Полный выход — только через пункт "Выход" в меню трея.
@@ -626,6 +965,14 @@ function reg() {
   H('update:checkApp', () => checkAppUpdate());
   H('update:ipset', () => updateIpset());
   H('update:hosts', () => updateHosts());
+  H('autostart:get', () => autostartGet());
+  H('autostart:set', (_e, on) => autostartSet(on));
+
+  H('test:run', (_e, mode, list, baseline) => runSweep(mode, list, baseline));
+  H('test:abort', () => { testAbort = true; return { ok: true }; });
+  H('test:resultsFile', () => testResultsFile());
+  H('test:openResults', () => shell.openPath(testResultsFile()));
+
   H('open:external', (_e, url) => shell.openExternal(url));
   H('open:folder', () => { const p = activePath(); if (p) shell.openPath(p); });
 }

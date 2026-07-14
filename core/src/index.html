@@ -34,6 +34,8 @@
         <button class="nav-item" data-view="strategies"><span class="tree">╠═</span>стратегии</button>
         <button class="nav-item" data-view="lists"><span class="tree">╠═</span>домены-и-списки</button>
         <button class="nav-item" data-view="diagnostics"><span class="tree">╠═</span>диагностика</button>
+        <button class="nav-item" data-view="tests"><span class="tree">╠═</span>тесты</button>
+        <button class="nav-item" data-view="autostart"><span class="tree">╠═</span>автозагрузка</button>
         <button class="nav-item" data-view="updates"><span class="tree">╠═</span>обновления</button>
         <button class="nav-item" data-view="settings"><span class="tree">╚═</span>настройки</button>
       </nav>
@@ -174,6 +176,100 @@
         </header>
         <div id="diagResults" class="diag-list">
           <div class="empty">Нажмите «Запустить проверку», чтобы найти конфликты и проблемы.</div>
+        </div>
+      </section>
+
+      <!-- ТЕСТЫ -->
+      <section class="view hidden" data-view="tests">
+        <header class="view-head">
+          <div><div class="eyebrow">проверка обхода</div><h1>Тесты</h1></div>
+          <div class="head-actions">
+            <button class="ghost hidden" id="testStopBtn">Остановить</button>
+            <button class="primary" id="testRunBtn">Запустить тест</button>
+          </div>
+        </header>
+
+        <div class="seg" id="testMode">
+          <button class="seg-btn active" data-mode="standard">Стандартный</button>
+          <button class="seg-btn" data-mode="dpi">DPI Check</button>
+        </div>
+        <div class="test-hint" id="testHint"></div>
+
+        <div class="card test-scope" id="testScope">
+          <div class="scope-row">
+            <span class="scope-label">Что перебираем</span>
+            <select class="select" id="dpiTarget"></select>
+          </div>
+          <label class="scope-check">
+            <input type="checkbox" id="dpiBaseline" checked>
+            <span>сначала проверить без обхода — видно, что режет провайдер</span>
+          </label>
+        </div>
+
+        <div class="card test-run" id="testCard">
+          <div class="test-bar"><span class="test-bar-fill" id="testBarFill"></span></div>
+          <div class="test-status" id="testStatus">Готов к запуску</div>
+          <div class="probe-grid" id="probeGrid"></div>
+
+          <!-- всплывающая справка по сервису -->
+          <div class="probe-pop" id="probePop">
+            <div class="pop-group" id="popGroup"></div>
+            <div class="pop-host" id="popHost"></div>
+            <div class="pop-desc" id="popDesc"></div>
+          </div>
+        </div>
+
+        <div class="dpi-results" id="dpiResults"></div>
+
+        <div class="note" id="testNote">
+          <span class="note-icon">i</span>
+          <div class="note-body">
+            <div class="note-title">Результаты сохраняются автоматически</div>
+            <div class="note-text">
+              Все прогоны дописываются в один файл: дата, лучшая стратегия, подробности по каждой пробе.
+              Файл: <code id="testResultsPath">—</code>
+            </div>
+          </div>
+          <button class="ghost" id="openResultsBtn">Открыть файл</button>
+        </div>
+      </section>
+
+      <!-- АВТОЗАГРУЗКА -->
+      <section class="view hidden" data-view="autostart">
+        <header class="view-head">
+          <div><div class="eyebrow">запуск вместе с Windows</div><h1>Автозагрузка</h1></div>
+        </header>
+
+        <div class="card auto-card">
+          <div class="auto-main">
+            <div class="auto-text">
+              <div class="auto-title">Запускать Zapret Control при входе в Windows</div>
+              <div class="auto-sub" id="autoSub">Проверяю…</div>
+            </div>
+            <button class="auto-switch" id="autoSwitch" role="switch" aria-checked="false" aria-label="Автозагрузка">
+              <span class="auto-switch-knob"></span>
+            </button>
+          </div>
+
+          <div class="auto-flow">
+            <div class="flow-step"><span class="flow-dot"></span><div><b>Вход в Windows</b><i>задача Планировщика срабатывает автоматически</i></div></div>
+            <div class="flow-line"></div>
+            <div class="flow-step"><span class="flow-dot"></span><div><b>Старт с правами админа</b><i>без окна UAC — права выдаёт сама задача</i></div></div>
+            <div class="flow-line"></div>
+            <div class="flow-step"><span class="flow-dot"></span><div><b>Прячется в трей</b><i>окно не открывается, значок «ZH» рядом с часами</i></div></div>
+          </div>
+        </div>
+
+        <div class="note">
+          <span class="note-icon">i</span>
+          <div class="note-body">
+            <div class="note-title">Почему Планировщик, а не автозагрузка Windows</div>
+            <div class="note-text">
+              Приложение ставит службу Windows, поэтому ему нужны права администратора. Через обычную
+              автозагрузку оно стартовало бы без прав и просило подтверждение UAC при каждом включении
+              компьютера. Задача Планировщика выдаёт права сама — молча и один раз при настройке.
+            </div>
+          </div>
         </div>
       </section>
 

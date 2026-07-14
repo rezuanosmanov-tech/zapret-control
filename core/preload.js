@@ -40,6 +40,15 @@ contextBridge.exposeInMainWorld('zapret', {
   updateIpset:    () => invoke('update:ipset'),
   updateHosts:    () => invoke('update:hosts'),
 
+  autostartGet:   () => invoke('autostart:get'),
+  autostartSet:   (on) => invoke('autostart:set', on),
+
+  testRun:        (mode, list, baseline) => invoke('test:run', mode, list, baseline),
+  testAbort:      () => invoke('test:abort'),
+  testResultsFile:() => invoke('test:resultsFile'),
+  openTestResults:() => invoke('test:openResults'),
+  onTestEvent:    (cb) => ipcRenderer.on('test:event', (_e, ev) => cb(ev)),
+
   openExternal:   (url) => invoke('open:external', url),
   openFolder:     () => invoke('open:folder'),
 

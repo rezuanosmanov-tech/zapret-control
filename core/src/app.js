@@ -54,6 +54,8 @@ $$('.nav-item').forEach(btn => btn.addEventListener('click', () => {
     }
   });
   if (v === 'strategies') loadStrategies();
+  if (v === 'tests') testLoadStrategies();
+  if (v === 'autostart') autostartRefresh();
   if (v === 'lists') loadList(currentList);
   if (v === 'settings') loadSettings();
   if (v === 'dashboard') refreshStatus();
@@ -429,3 +431,340 @@ $('#autoUpdate').addEventListener('change', async (e) => {
   await refreshStatus();
   setInterval(refreshStatus, 5000);
 })();
+
+// =============================================================== тесты ========
+/*
+ * Оба режима перебирают конфиги. Разница только в глубине: стандартный проверяет
+ * базовые адреса, DPI Check — полный список сервисов.
+ *
+ * Строки результатов добавляются СВЕРХУ: текущий конфиг всегда первый, готовые
+ * уезжают вниз — мотать страницу не нужно. По окончании список пересортируется,
+ * лучший всплывает наверх; переезд строк анимируется приёмом FLIP (замерили
+ * позиции до, переставили узлы, доехали трансформом), поэтому перестановка
+ * выглядит плавной, а не скачком.
+ *
+ * Плитки проб и строки не пересоздаются на каждое событие — меняются только
+ * классы и текст, иначе CSS-анимации перезапускались бы и картинка дёргалась.
+ */
+const T = {
+  mode: 'standard',
+  running: false,
+  probes: new Map(),      // host -> плитка
+  rows: new Map(),        // bat  -> строка результата
+  targets: [],            // описания сервисов для всплывашки
+  steps: 0,
+  step: 0,
+  pinned: null,           // host, чья справка открыта
+};
+
+const HINTS = {
+  standard: 'Быстрый перебор всех стратегий по базовым адресам YouTube и Discord. Обход перед тестом выключается, чтобы проверка была честной, а после — возвращается как было.',
+  dpi: 'Полная проверка: к YouTube и Discord добавляются Cloudflare, Twitch, соцсети и другие сервисы, которые обычно режет DPI. Дольше, зато видно всю картину. Связь во время теста прерывается — это нормально.',
+};
+
+function testSetMode(mode) {
+  T.mode = mode;
+  $$('#testMode .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  $('#testHint').textContent = HINTS[mode];
+  testReset();
+}
+
+function testReset() {
+  $('#dpiResults').innerHTML = '';
+  $('#probeGrid').innerHTML = '';
+  T.probes.clear(); T.rows.clear();
+  popClose();
+  $('#testStatus').textContent = 'Готов к запуску';
+  $('#testBarFill').style.width = '0%';
+}
+
+async function testLoadStrategies() {
+  const sel = $('#dpiTarget');
+  let items = [];
+  try { items = await Z.strategies(); } catch {}
+  const keep = sel.value;
+  sel.innerHTML = '';
+  const all = document.createElement('option');
+  all.value = '__all__';
+  all.textContent = `все стратегии (${items.length})`;
+  sel.appendChild(all);
+  for (const f of items) {
+    const o = document.createElement('option');
+    o.value = f;
+    o.textContent = f.replace(/\.bat$/i, '');
+    sel.appendChild(o);
+  }
+  if (keep) sel.value = keep;
+}
+
+async function testShowResultsPath() {
+  try { $('#testResultsPath').textContent = await Z.testResultsFile(); } catch {}
+}
+
+// ---- всплывающая справка о сервисе ----
+function popClose() {
+  $('#probePop').classList.remove('open');
+  $$('.probe.selected').forEach(el => el.classList.remove('selected'));
+  T.pinned = null;
+}
+
+function popOpen(host, tile) {
+  const t = T.targets.find(x => x.host === host);
+  if (!t) return;
+  const pop = $('#probePop');
+  $('#popGroup').textContent = t.group;
+  $('#popHost').textContent = t.host;
+  $('#popDesc').textContent = t.desc;
+
+  // позиционируем под плиткой, не вылезая за карточку
+  const card = $('#testCard').getBoundingClientRect();
+  const r = tile.getBoundingClientRect();
+  const w = 290;
+  let left = r.left - card.left;
+  left = Math.min(left, card.width - w - 8);
+  pop.style.left = Math.max(0, left) + 'px';
+  pop.style.top = (r.bottom - card.top + 8) + 'px';
+
+  $$('.probe.selected').forEach(el => el.classList.remove('selected'));
+  tile.classList.add('selected');
+  pop.classList.add('open');
+  T.pinned = host;
+}
+
+document.addEventListener('click', (e) => {
+  if (!T.pinned) return;
+  if (e.target.closest('.probe') || e.target.closest('.probe-pop')) return;
+  popClose();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') popClose(); });
+
+// ---- плитки и строки ----
+function probeTile(host) {
+  let el = T.probes.get(host);
+  if (el) return el;
+  el = document.createElement('div');
+  el.className = 'probe';
+  el.innerHTML = `<span class="probe-dot"></span><span class="probe-host"></span><span class="probe-ms"></span>`;
+  el.querySelector('.probe-host').textContent = host;
+  el.addEventListener('click', () => {
+    if (T.pinned === host) popClose(); else popOpen(host, el);
+  });
+  $('#probeGrid').appendChild(el);
+  T.probes.set(host, el);
+  return el;
+}
+
+function dpiRow(bat, label, baseline) {
+  let el = T.rows.get(bat);
+  if (el) return el;
+  el = document.createElement('div');
+  el.className = 'dpi-row' + (baseline ? ' baseline' : '');
+  el.dataset.ok = '0'; el.dataset.avg = '99999'; el.dataset.baseline = baseline ? '1' : '0';
+  el.innerHTML = `
+    <div>
+      <div class="dpi-name"></div>
+      <div class="dpi-sub">проверяю…</div>
+    </div>
+    <div class="dpi-score">
+      <div class="dpi-bar"><span></span></div>
+      <div class="dpi-pct">—</div>
+    </div>
+    <button class="mini dpi-apply hidden">Применить</button>`;
+  el.querySelector('.dpi-name').textContent = label.replace(/\.bat$/i, '');
+  if (!baseline) {
+    el.querySelector('.dpi-apply').addEventListener('click', async () => {
+      try {
+        await Z.installService(bat.endsWith('.bat') ? bat : bat + '.bat');
+        selectedStrategy = bat.replace(/\.bat$/i, '');
+        toast('Стратегия применена: ' + selectedStrategy, 'ok');
+        refreshStatus();
+      } catch (e) { toast('Ошибка: ' + e.message, 'err'); }
+    });
+  }
+  $('#dpiResults').prepend(el);      // свежий конфиг — сверху, готовые уезжают вниз
+  T.rows.set(bat, el);
+  return el;
+}
+
+/* Пересортировка с FLIP: сначала запоминаем, где строки были, потом переставляем
+   узлы и «доводим» их трансформом от старой позиции к новой. */
+function sortRows(best) {
+  const cont = $('#dpiResults');
+  const rows = [...cont.children];
+  const before = new Map(rows.map(r => [r, r.getBoundingClientRect().top]));
+
+  rows.slice().sort((a, b) => {
+    if (a.dataset.baseline === '1') return 1;          // база сравнения — вниз
+    if (b.dataset.baseline === '1') return -1;
+    return (+b.dataset.ok - +a.dataset.ok) || (+a.dataset.avg - +b.dataset.avg);
+  }).forEach(r => cont.appendChild(r));
+
+  for (const r of rows) {
+    const dy = before.get(r) - r.getBoundingClientRect().top;
+    if (!dy) continue;
+    r.animate(
+      [{ transform: `translateY(${dy}px)` }, { transform: 'none' }],
+      { duration: 560, easing: 'cubic-bezier(.2,.75,.25,1)' },
+    );
+  }
+  if (best) T.rows.get(best)?.classList.add('best');
+}
+
+function testBusy(on) {
+  T.running = on;
+  $('#testCard').classList.toggle('busy', on);
+  $('#testRunBtn').classList.toggle('hidden', on);
+  $('#testStopBtn').classList.toggle('hidden', !on);
+  $$('#testMode .seg-btn').forEach(b => b.disabled = on);
+  $('#dpiTarget').disabled = on;
+  $('#dpiBaseline').disabled = on;
+}
+
+Z.onTestEvent((ev) => {
+  if (ev.type === 'saved') {
+    const note = $('#testNote');
+    note.classList.add('saved');
+    $('#testResultsPath').textContent = ev.file;
+    note.querySelector('.note-title').textContent = 'Результат дописан в файл';
+    return;
+  }
+
+  if (ev.type === 'start') {
+    T.steps = ev.total; T.step = 0;
+    T.targets = ev.targets || [];
+    $('#testBarFill').style.width = '0%';
+    return;
+  }
+
+  if (ev.type === 'phase') { $('#testStatus').textContent = ev.text; return; }
+
+  if (ev.type === 'probe') {
+    const el = probeTile(ev.host);
+    el.classList.remove('run', 'ok', 'fail');
+    if (ev.state === 'run') el.classList.add('run');
+    else {
+      el.classList.add(ev.state);
+      el.querySelector('.probe-ms').textContent = ev.state === 'ok' ? ev.ms + ' мс' : (ev.error || 'нет связи');
+    }
+    return;
+  }
+
+  if (ev.type === 'config') {
+    const row = dpiRow(ev.bat, ev.label, ev.bat === '__baseline__');
+    if (ev.state === 'run') {
+      row.classList.add('running');
+      $('#probeGrid').innerHTML = ''; T.probes.clear(); popClose();
+      $('#testStatus').innerHTML =
+        `Конфиг <b>${ev.label.replace(/\.bat$/i, '')}</b> — ${ev.index + 1} из ${ev.total}`;
+    } else {
+      row.classList.remove('running');
+      row.dataset.ok = ev.okCount; row.dataset.avg = ev.avg || 99999;
+      row.querySelector('.dpi-bar span').style.width = ev.score + '%';
+      row.querySelector('.dpi-pct').textContent = ev.score + '%';
+      row.querySelector('.dpi-sub').textContent =
+        `${ev.okCount} из ${ev.total} проб${ev.avg ? ' · ' + ev.avg + ' мс' : ''}`;
+      if (ev.bat !== '__baseline__' && ev.okCount > 0) row.querySelector('.dpi-apply').classList.remove('hidden');
+      T.step = ev.index + 1;
+      $('#testBarFill').style.width = Math.round(T.step / T.steps * 100) + '%';
+    }
+    return;
+  }
+
+  if (ev.type === 'done') {
+    testBusy(false);
+    $('#testBarFill').style.width = '100%';
+    sortRows(ev.best);
+
+    if (ev.aborted) {
+      $('#testStatus').textContent = 'Тест остановлен. Проверенное записано в файл.';
+      return;
+    }
+    if (ev.best) {
+      $('#testStatus').innerHTML =
+        `Лучший результат: <b>${ev.best.replace(/\.bat$/i, '')}</b> — он поднят наверх списка. Нажмите «Применить», чтобы включить его.`;
+      toast('Тест завершён', 'ok');
+    } else {
+      $('#testStatus').textContent = 'Ни одна стратегия не прошла проверки. Загляните в «Диагностику» — возможно, мешает другая программа.';
+      toast('Рабочих стратегий не найдено', 'err');
+    }
+  }
+});
+
+$$('#testMode .seg-btn').forEach(b => b.addEventListener('click', () => {
+  if (!T.running) testSetMode(b.dataset.mode);
+}));
+
+$('#openResultsBtn').addEventListener('click', () => Z.openTestResults());
+
+$('#testStopBtn').addEventListener('click', async () => {
+  $('#testStatus').textContent = 'Останавливаю, возвращаю прежние настройки…';
+  await Z.testAbort();
+});
+
+$('#testRunBtn').addEventListener('click', async () => {
+  if (!lastStatus || !lastStatus.ready) { toast('Сначала укажите папку Zapret', 'err'); return; }
+
+  testReset();
+  testBusy(true);
+  $('#testStatus').textContent = 'Готовлю чистую проверку…';
+
+  const target = $('#dpiTarget').value;
+  let list = [];
+  try { list = await Z.strategies(); } catch {}
+  if (target !== '__all__') list = [target];
+  if (!list.length) { toast('Стратегии не найдены', 'err'); testBusy(false); return; }
+
+  await Z.testRun(T.mode, list, $('#dpiBaseline').checked);
+});
+
+testSetMode('standard');
+testLoadStrategies();
+testShowResultsPath();
+
+
+// ========================================================= автозагрузка ======
+/*
+ * Состояние переключателя приходит из Планировщика задач, а не хранится в конфиге:
+ * задачу могли удалить снаружи, и локальный флаг тогда врал бы.
+ */
+let autostartOn = false;
+
+function autostartPaint(on) {
+  autostartOn = on;
+  const sw = $('#autoSwitch');
+  sw.setAttribute('aria-checked', on ? 'true' : 'false');
+  $('.auto-card').classList.toggle('on', on);
+  const sub = $('#autoSub');
+  sub.classList.toggle('on', on);
+  sub.textContent = on
+    ? 'Включена: приложение стартует вместе с Windows и сразу сворачивается в трей.'
+    : 'Выключена: приложение придётся запускать вручную.';
+}
+
+async function autostartRefresh() {
+  try {
+    const r = await Z.autostartGet();
+    autostartPaint(!!r.enabled);
+  } catch {
+    $('#autoSub').textContent = 'Не удалось проверить состояние задачи.';
+  }
+}
+
+$('#autoSwitch').addEventListener('click', async () => {
+  const sw = $('#autoSwitch');
+  const next = !autostartOn;
+  sw.disabled = true;
+  autostartPaint(next);                      // отвечаем мгновенно, не ждём Планировщик
+  try {
+    const r = await Z.autostartSet(next);
+    autostartPaint(!!r.enabled);
+    toast(r.enabled ? 'Автозагрузка включена' : 'Автозагрузка выключена', 'ok');
+  } catch (e) {
+    autostartPaint(!next);                   // откатываем, если задача не создалась
+    toast('Ошибка: ' + e.message, 'err');
+  } finally {
+    sw.disabled = false;
+  }
+});
+
+autostartRefresh();
