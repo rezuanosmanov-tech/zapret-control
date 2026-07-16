@@ -101,23 +101,41 @@
               <span class="orb-float">
                 <span class="orb-aura"></span>
                 <span class="orb-body">
-                  <span class="l l-plasma-a"></span>
-                  <span class="l l-plasma-b"></span>
-                  <span class="l l-blob"></span>
-                  <span class="l l-blob2"></span>
-                  <span class="l l-motes"></span>
-                  <span class="l l-shells"></span>
-                  <span class="l l-tint"></span>
-                  <span class="l l-shade"></span>
-                  <span class="l l-spec"></span>
+                  <span class="orb-plasma">
+                    <span class="l l-plasma-a"></span>
+                    <span class="l l-plasma-b"></span>
+                    <span class="l l-blob"></span>
+                    <span class="l l-blob2"></span>
+                  </span>
+                  <span class="l-motes"></span>
+                  <span class="l-shells"></span>
+                  <span class="l-tint"></span>
+                  <span class="l-shade"></span>
+                  <span class="l-spec"></span>
                 </span>
               </span>
             </button>
 
-            <!-- платформа-трапеция с надписями -->
+            <!-- платформа-трапеция с индикаторами и надписями -->
             <div class="platform">
+              <div class="lamps" id="lamps">
+                <button class="lamp" data-key="discord" aria-label="Discord"><span class="lamp-bulb"></span></button>
+                <button class="lamp" data-key="youtube" aria-label="YouTube"><span class="lamp-bulb"></span></button>
+                <button class="lamp" data-key="cloudflare" aria-label="Cloudflare"><span class="lamp-bulb"></span></button>
+              </div>
               <div class="pf-state" id="statusText">Проверка…</div>
               <div class="pf-strategy" id="coreStrategy">стратегия не выбрана</div>
+            </div>
+
+            <!-- всплывающая справка о лампочке -->
+            <div class="lamp-pop" id="lampPop">
+              <div class="lp-title" id="lpTitle"></div>
+              <div class="lp-host" id="lpHost"></div>
+              <div class="lp-legend">
+                <div><span class="lp-dot ok"></span> зелёный — сервис доступен, обход работает</div>
+                <div><span class="lp-dot blocked"></span> красный — сервис недоступен, DPI режет</div>
+                <div><span class="lp-dot nonet"></span> серый — нет сети или проверка идёт</div>
+              </div>
             </div>
           </div>
           <!-- =========================================================== -->
@@ -132,9 +150,32 @@
           <div class="spark-layer" id="sparkLayer"></div>
         </div>
 
+        <!-- выбор стратегии при включении (когда вкладка «Стратегии» скрыта) -->
+        <div class="modal-back hidden" id="stratModal">
+          <div class="modal">
+            <div class="modal-title">Выберите стратегию</div>
+            <div class="modal-text">Обход можно включить с любой из них. Не уверены, какая подойдёт — откройте «Тесты» и запустите автоподбор.</div>
+            <select class="select" id="stratSelect"></select>
+            <div class="modal-actions" style="margin-top:18px">
+              <button class="ghost" id="stratCancel">Отмена</button>
+              <button class="primary" id="stratConfirm">Включить</button>
+            </div>
+          </div>
+        </div>
+
         <div class="console-block">
-          <div class="console-head"><span class="eyebrow">журнал</span><button class="mini" id="clearLog">очистить</button></div>
-          <pre id="log" class="console"></pre>
+          <div class="console-head">
+            <div class="seg log-seg" id="logTabs">
+              <button class="seg-btn active" data-log="simple">Простой</button>
+              <button class="seg-btn" data-log="tech">Расширенный</button>
+            </div>
+            <div class="log-actions">
+              <button class="mini" id="saveLog">сохранить в файл</button>
+              <button class="mini" id="clearLog">очистить</button>
+            </div>
+          </div>
+          <pre id="logSimple" class="console"></pre>
+          <pre id="logTech" class="console hidden"></pre>
         </div>
       </section>
 
@@ -158,12 +199,57 @@
           </div>
         </header>
         <p class="hint" id="listHint"></p>
+
+        <!-- пресеты (только расширенный режим) -->
+        <div class="preset-block" id="presetBlock">
+          <div class="preset-caption">Пресеты</div>
+          <div class="preset-row" id="presetRow"></div>
+        </div>
+
         <div class="add-row">
-          <input id="listInput" type="text" placeholder="example.com, можно несколько через запятую" />
+          <textarea id="listInput" rows="1" placeholder="example.com — можно несколько через запятую или с новой строки"></textarea>
           <button class="primary" id="listAddBtn">Добавить</button>
         </div>
+
+        <!-- поиск по списку -->
+        <div class="search-row">
+          <input id="listSearch" type="search" placeholder="Поиск по списку…" />
+          <span class="list-count" id="listCount"></span>
+        </div>
+
+        <!-- индикатор подгрузки большого списка -->
+        <div class="list-loading hidden" id="listLoading">
+          <div class="ll-bar"><span class="ll-fill" id="llFill"></span></div>
+          <div class="ll-text" id="llText">Обрабатываю список…</div>
+        </div>
+
         <div id="listItems" class="chip-list"></div>
+
+        <!-- пагинация -->
+        <div class="pager hidden" id="listPager">
+          <button class="ghost" id="pagePrev">← Назад</button>
+          <span class="pager-info" id="pagerInfo"></span>
+          <button class="ghost" id="pageNext">Вперёд →</button>
+        </div>
       </section>
+
+      <!-- окно выбора сервисов пресета -->
+      <div class="modal-back hidden" id="presetModal">
+        <div class="modal modal-wide">
+          <div class="modal-title" id="presetTitle">Выбор сервисов</div>
+          <div class="modal-text">Отметьте нужные сервисы — можно несколько. Затем выберите, куда добавить их домены.</div>
+          <div class="svc-grid" id="svcGrid"></div>
+          <div class="svc-foot">
+            <button class="mini" id="svcAll">Выбрать все</button>
+            <span class="svc-count" id="svcCount">выбрано: 0</span>
+          </div>
+          <div class="modal-actions">
+            <button class="ghost" id="presetCancel">Отмена</button>
+            <button class="ghost" id="presetToExclude">В исключения</button>
+            <button class="primary" id="presetToBypass">В обход</button>
+          </div>
+        </div>
+      </div>
 
       <!-- ДИАГНОСТИКА -->
       <section class="view hidden" data-view="diagnostics">
@@ -189,21 +275,36 @@
           </div>
         </header>
 
-        <div class="seg" id="testMode">
-          <button class="seg-btn active" data-mode="standard">Стандартный</button>
-          <button class="seg-btn" data-mode="dpi">DPI Check</button>
-        </div>
-        <div class="test-hint" id="testHint"></div>
-
-        <div class="card test-scope" id="testScope">
-          <div class="scope-row">
-            <span class="scope-label">Что перебираем</span>
-            <select class="select" id="dpiTarget"></select>
+        <!-- ПРОСТОЙ РЕЖИМ: автоподбор -->
+        <div class="note simple-note" id="simpleNote">
+          <span class="note-icon">i</span>
+          <div class="note-body">
+            <div class="note-title">Упрощённый автоподбор</div>
+            <div class="note-text">
+              Проверяет только Discord, YouTube и Cloudflare, перебирает стратегии и сам включает лучшую.
+              Нужен полный контроль и все сервисы — включите расширенный режим в «Настройки».
+            </div>
           </div>
-          <label class="scope-check">
-            <input type="checkbox" id="dpiBaseline" checked>
-            <span>сначала проверить без обхода — видно, что режет провайдер</span>
-          </label>
+        </div>
+
+        <!-- РАСШИРЕННЫЙ РЕЖИМ: выбор режима и целей -->
+        <div class="adv-only">
+          <div class="seg" id="testMode">
+            <button class="seg-btn active" data-mode="standard">Стандартный</button>
+            <button class="seg-btn" data-mode="dpi">DPI Check</button>
+          </div>
+          <div class="test-hint" id="testHint"></div>
+
+          <div class="card test-scope" id="testScope">
+            <div class="scope-row">
+              <span class="scope-label">Что перебираем</span>
+              <select class="select" id="dpiTarget"></select>
+            </div>
+            <label class="scope-check">
+              <input type="checkbox" id="dpiBaseline" checked>
+              <span>сначала проверить без обхода — видно, что режет провайдер</span>
+            </label>
+          </div>
         </div>
 
         <div class="card test-run" id="testCard">
@@ -256,7 +357,16 @@
             <div class="flow-line"></div>
             <div class="flow-step"><span class="flow-dot"></span><div><b>Старт с правами админа</b><i>без окна UAC — права выдаёт сама задача</i></div></div>
             <div class="flow-line"></div>
-            <div class="flow-step"><span class="flow-dot"></span><div><b>Прячется в трей</b><i>окно не открывается, значок «ZH» рядом с часами</i></div></div>
+            <div class="flow-step"><span class="flow-dot"></span><div><b id="flowLast">Прячется в трей</b><i id="flowLastSub">окно не открывается, значок «ZH» рядом с часами</i></div></div>
+          </div>
+
+          <!-- выбор режима запуска (активен только при включённой автозагрузке) -->
+          <div class="auto-mode" id="autoModeRow">
+            <div class="auto-mode-label">Как запускать при старте</div>
+            <div class="seg" id="autoModeSeg">
+              <button class="seg-btn active" data-hidden="1">В трее</button>
+              <button class="seg-btn" data-hidden="0">Окном</button>
+            </div>
           </div>
         </div>
 
@@ -311,6 +421,25 @@
         <header class="view-head">
           <div><div class="eyebrow">параметры</div><h1>Настройки</h1></div>
         </header>
+
+        <div class="setting">
+          <div class="setting-text">
+            <h3>Режим интерфейса</h3>
+            <p>Простой — только необходимое. Расширенный — все вкладки и тонкие настройки.</p>
+          </div>
+          <div class="seg" id="modeSeg">
+            <button class="seg-btn active" data-mode="simple">Простой</button>
+            <button class="seg-btn" data-mode="advanced">Расширенный</button>
+          </div>
+        </div>
+
+        <div class="setting setting-theme">
+          <div class="setting-text">
+            <h3>Тема оформления</h3>
+            <p>Цвет плазмы ядра, свечения и акцентов.</p>
+          </div>
+          <div class="theme-row" id="themeRow"></div>
+        </div>
 
         <div class="setting">
           <div class="setting-text"><h3>Папка Zapret</h3><p id="pathText">не выбрана</p></div>

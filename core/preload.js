@@ -27,10 +27,6 @@ contextBridge.exposeInMainWorld('zapret', {
   autoUpdateGet:  () => invoke('autoupdate:get'),
   autoUpdateSet:  (on) => invoke('autoupdate:set', on),
 
-  listRead:       (w) => invoke('list:read', w),
-  listAdd:        (w, v) => invoke('list:add', w, v),
-  listRemove:     (w, v) => invoke('list:remove', w, v),
-  listWrite:      (w, items) => invoke('list:write', w, items),
 
   diagRun:        () => invoke('diag:run'),
   diagFix:        (f) => invoke('diag:fix', f),
@@ -40,14 +36,26 @@ contextBridge.exposeInMainWorld('zapret', {
   updateIpset:    () => invoke('update:ipset'),
   updateHosts:    () => invoke('update:hosts'),
 
+  monitorInfo:    () => invoke('monitor:info'),
+  logSave:        () => invoke('log:save'),
+  setPref:        (key, value) => invoke('config:setPref', key, value),
+  onMonitor:      (cb) => ipcRenderer.on('monitor:event', (_e, ev) => cb(ev)),
+
   autostartGet:   () => invoke('autostart:get'),
-  autostartSet:   (on) => invoke('autostart:set', on),
+  autostartSet:   (on, hidden) => invoke('autostart:set', on, hidden),
 
   testRun:        (mode, list, baseline) => invoke('test:run', mode, list, baseline),
   testAbort:      () => invoke('test:abort'),
   testResultsFile:() => invoke('test:resultsFile'),
   openTestResults:() => invoke('test:openResults'),
   onTestEvent:    (cb) => ipcRenderer.on('test:event', (_e, ev) => cb(ev)),
+
+  listPage:       (w, opts) => invoke('list:page', w, opts),
+  listAdd:        (w, v) => invoke('list:add', w, v),
+  listAddPreset:  (w, arr) => invoke('list:addPreset', w, arr),
+  listRemove:     (w, v) => invoke('list:remove', w, v),
+  listClear:      (w) => invoke('list:clear', w),
+  listPresets:    () => invoke('list:presets'),
 
   openExternal:   (url) => invoke('open:external', url),
   openFolder:     () => invoke('open:folder'),

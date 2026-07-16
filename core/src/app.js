@@ -24,7 +24,6 @@ document.addEventListener('pointerdown', (e) => {
 });
 
 let selectedStrategy = null;   // выбранный .bat
-let currentList = 'bypass';
 let lastStatus = null;
 
 // ---------------------------------------------------------------- утилиты ----
@@ -32,11 +31,39 @@ function toast(msg, kind = 'info') {
   const t = $('#toast'); t.textContent = msg; t.className = 'toast show ' + kind;
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2600);
 }
-function logLine(s) {
-  const el = $('#log'); el.textContent += (el.textContent ? '\n' : '') + s;
+/*
+ * Журнал в два слоя: простой (человеческие сообщения) и расширенный (всё,
+ * включая технические). Переключаются как вкладки. Обе строки ротируются, чтобы
+ * не разрастались бесконечно.
+ */
+const LOG_MAX = 500;
+function appendLog(el, s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  el.appendChild(div);
+  while (el.childElementCount > LOG_MAX) el.removeChild(el.firstChild);
   el.scrollTop = el.scrollHeight;
 }
-Z.onLog((l) => l && logLine(l));
+function logLine(ev) {
+  // Совместимость: старые строки могли приходить как обычный текст.
+  const level = typeof ev === 'object' ? ev.level : 'simple';
+  const line = typeof ev === 'object' ? ev.line : ev;
+  if (!line) return;
+  const t = new Date().toLocaleTimeString();
+  const stamped = `[${t}] ${line}`;
+  // Технический слой видит всё; простой — только человеческие сообщения.
+  appendLog($('#logTech'), stamped);
+  if (level === 'simple') appendLog($('#logSimple'), stamped);
+}
+Z.onLog(logLine);
+
+$$('#logTabs .seg-btn').forEach(b => b.addEventListener('click', () => {
+  $$('#logTabs .seg-btn').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  const tech = b.dataset.log === 'tech';
+  $('#logTech').classList.toggle('hidden', !tech);
+  $('#logSimple').classList.toggle('hidden', tech);
+}));
 
 // ------------------------------------------------------------- навигация -----
 $$('.nav-item').forEach(btn => btn.addEventListener('click', () => {
@@ -56,7 +83,7 @@ $$('.nav-item').forEach(btn => btn.addEventListener('click', () => {
   if (v === 'strategies') loadStrategies();
   if (v === 'tests') testLoadStrategies();
   if (v === 'autostart') autostartRefresh();
-  if (v === 'lists') loadList(currentList);
+  if (v === 'lists') { loadList(); loadPresets(); }
   if (v === 'settings') loadSettings();
   if (v === 'dashboard') refreshStatus();
 }));
@@ -119,6 +146,13 @@ function sendSpark(orb, card) {
   const y1 = C.top + C.height / 2 - L.top;
   const dx = x1 - x0;
   const d = `M ${x0} ${y0} C ${x0 + dx * .35} ${y0 - 42}, ${x0 + dx * .72} ${y1 - 30}, ${x1} ${y1}`;
+
+  // SVG-луч рисуется в тех же ПИКСЕЛЬНЫХ координатах, что и искра (offset-path).
+  // Без явного viewBox, совпадающего с размером слоя, путь SVG масштабируется
+  // иначе, чем CSS-путь искры, и линия с шариком разъезжаются.
+  const beamSvg = $('#beamLayer');
+  beamSvg.setAttribute('viewBox', `0 0 ${L.width} ${L.height}`);
+  beamSvg.setAttribute('preserveAspectRatio', 'none');
 
   // светящийся след
   const beam = document.createElementNS(SVG_NS, 'path');
@@ -218,17 +252,61 @@ $('#powerBtn').addEventListener('click', async () => {
   if (lastStatus.running) {
     setCore('pending', 'Выключаю…');
     await Z.stop(); toast('Обход остановлен', 'ok');
+    setTimeout(refreshStatus, 800);
   } else {
     const bat = selectedStrategy || lastStatus.strategy;
-    if (!bat) { toast('Выберите стратегию во вкладке «Стратегии»', 'err'); return; }
-    setCore('pending', 'Включаю…');
-    try { await Z.installService(bat.endsWith('.bat') ? bat : bat + '.bat'); toast('Служба запущена: ' + bat, 'ok'); }
-    catch (e) { toast('Ошибка: ' + e.message, 'err'); }
+    // Вкладка «Стратегии» в простом режиме скрыта, поэтому выбор показываем прямо
+    // здесь выпадающим списком, а не отправляем в несуществующую вкладку.
+    if (!bat) { await openStrategyPicker(); return; }
+    startBypass(bat);
   }
-  setTimeout(refreshStatus, 800);
 });
-$('#openFolderBtn').addEventListener('click', () => Z.openFolder());
-$('#clearLog').addEventListener('click', () => { $('#log').textContent = ''; });
+
+async function startBypass(bat) {
+  setCore('pending', 'Включаю…');
+  try {
+    await Z.installService(bat.endsWith('.bat') ? bat : bat + '.bat');
+    selectedStrategy = bat.replace(/\.bat$/i, '');
+    toast('Обход включён: ' + selectedStrategy, 'ok');
+  } catch (e) { toast('Ошибка: ' + e.message, 'err'); }
+  setTimeout(refreshStatus, 800);
+}
+
+async function openStrategyPicker() {
+  const sel = $('#stratSelect');
+  let list = [];
+  try { list = await Z.strategies(); } catch {}
+  if (!list.length) { toast('Стратегии не найдены — проверьте папку Zapret', 'err'); return; }
+  sel.innerHTML = '';
+  for (const f of list) {
+    const o = document.createElement('option');
+    o.value = f; o.textContent = f.replace(/\.bat$/i, '');
+    sel.appendChild(o);
+  }
+  $('#stratModal').classList.remove('hidden');
+}
+$('#stratCancel').addEventListener('click', () => $('#stratModal').classList.add('hidden'));
+$('#stratModal').addEventListener('click', (e) => { if (e.target.id === 'stratModal') $('#stratModal').classList.add('hidden'); });
+$('#stratConfirm').addEventListener('click', () => {
+  const bat = $('#stratSelect').value;
+  $('#stratModal').classList.add('hidden');
+  if (bat) startBypass(bat);
+});
+$('#openFolderBtn').addEventListener('click', async () => {
+  const r = await Z.openFolder();
+  if (r && !r.ok) {
+    if (r.reason === 'no-path') toast('Папка Zapret не выбрана — укажите её в «Настройки»', 'err');
+    else if (r.reason === 'missing') toast('Папка не найдена — проверьте путь в «Настройки»', 'err');
+    else toast('Не удалось открыть папку', 'err');
+  }
+});
+$('#clearLog').addEventListener('click', () => { $('#logSimple').textContent = ''; $('#logTech').textContent = ''; });
+$('#saveLog').addEventListener('click', async () => {
+  try {
+    const r = await Z.logSave();
+    if (r && r.ok) toast('Журнал сохранён в файл', 'ok');
+  } catch (e) { toast('Не удалось сохранить: ' + e.message, 'err'); }
+});
 
 // ------------------------------------------------------------ стратегии ------
 async function loadStrategies() {
@@ -274,40 +352,221 @@ async function loadStrategies() {
 }
 
 // --------------------------------------------------------------- списки ------
+/*
+ * Список никогда не грузится в интерфейс целиком: main-процесс отдаёт страницу по
+ * 50 строк (отсортированную и, если нужно, отфильтрованную) плюс общее число.
+ * Поэтому даже 430 000 доменов не вешают окно — на экране максимум 50 плиток.
+ * Полоса подгрузки показывается, когда в списке больше страницы: она даёт понять,
+ * что программа обрабатывает большой файл, а не зависла.
+ */
 const LIST_HINTS = {
   bypass: 'Домены, которые нужно проводить через обход Zapret (list-general-user).',
   exclude: 'Домены-исключения — Zapret их не трогает, трафик идёт напрямую (list-exclude-user).',
   ipexclude: 'IP-адреса и подсети в исключения (ipset-exclude-user). Формат: 1.2.3.4 или 1.2.3.0/24.',
 };
+const PAGE_SIZE = 50;
+const L = { which: 'bypass', page: 0, query: '', pages: 1, total: 0, busy: false };
+let searchTimer = null;
+
 $$('#listTabs .seg-btn').forEach(b => b.addEventListener('click', () => {
   $$('#listTabs .seg-btn').forEach(x => x.classList.remove('active'));
-  b.classList.add('active'); currentList = b.dataset.list; loadList(currentList);
+  b.classList.add('active');
+  L.which = b.dataset.list; L.page = 0; L.query = '';
+  $('#listSearch').value = '';
+  loadList();
 }));
-async function loadList(which) {
-  $('#listHint').textContent = LIST_HINTS[which];
+
+async function loadList() {
+  if (L.busy) return;
+  L.busy = true;
+  $('#listHint').textContent = LIST_HINTS[L.which];
+
   const box = $('#listItems');
-  let items = [];
-  try { items = await Z.listRead(which); } catch {}
-  if (!items.length) { box.innerHTML = '<div class="empty">Список пуст. Добавьте домены выше.</div>'; return; }
-  box.innerHTML = '';
-  for (const v of items) {
-    const chip = document.createElement('div');
-    chip.className = 'chip ' + which;
-    chip.innerHTML = `<span>${v}</span><span class="x">×</span>`;
-    chip.querySelector('.x').addEventListener('click', async () => {
-      await Z.listRemove(which, v); loadList(which);
-    });
-    box.appendChild(chip);
+  const loading = $('#listLoading');
+
+  // Полосу подгрузки показываем только на больших списках — на мелких она бы
+  // мелькала и раздражала.
+  const heavy = L.total > PAGE_SIZE || L.total === 0 && L.page === 0 && false;
+  if (heavy) {
+    loading.classList.remove('hidden');
+    $('#llFill').style.width = '15%';
+    $('#llText').textContent = 'Обрабатываю список…';
+    box.classList.add('dim');
   }
+
+  let res;
+  try { res = await Z.listPage(L.which, { page: L.page, pageSize: PAGE_SIZE, query: L.query }); }
+  catch { res = { items: [], total: 0, page: 0, pages: 1 }; }
+
+  if (heavy) $('#llFill').style.width = '75%';
+
+  L.total = res.total; L.pages = res.pages; L.page = res.page;
+
+  box.innerHTML = '';
+  if (!res.items.length) {
+    box.innerHTML = L.query
+      ? '<div class="empty">Ничего не найдено по запросу.</div>'
+      : '<div class="empty">Список пуст. Добавьте домены выше.</div>';
+  } else {
+    const frag = document.createDocumentFragment();
+    for (const v of res.items) {
+      const chip = document.createElement('div');
+      chip.className = 'chip ' + L.which;
+      chip.innerHTML = `<span></span><span class="x">×</span>`;
+      chip.querySelector('span').textContent = v;
+      chip.querySelector('.x').addEventListener('click', async () => {
+        await Z.listRemove(L.which, v);
+        toast('Удалено: ' + v, 'ok');
+        loadList();
+      });
+      frag.appendChild(chip);
+    }
+    box.appendChild(frag);
+  }
+
+  // счётчик и пагинация
+  $('#listCount').textContent = L.total
+    ? (L.query ? `найдено: ${L.total}` : `всего: ${L.total}`)
+    : '';
+  const pager = $('#listPager');
+  if (L.pages > 1) {
+    pager.classList.remove('hidden');
+    $('#pagerInfo').textContent = `Страница ${L.page + 1} из ${L.pages}`;
+    $('#pagePrev').disabled = L.page === 0;
+    $('#pageNext').disabled = L.page >= L.pages - 1;
+  } else {
+    pager.classList.add('hidden');
+  }
+
+  if (heavy) {
+    $('#llFill').style.width = '100%';
+    setTimeout(() => { loading.classList.add('hidden'); box.classList.remove('dim'); }, 180);
+  }
+  L.busy = false;
 }
+
+$('#pagePrev').addEventListener('click', () => { if (L.page > 0) { L.page--; loadList(); } });
+$('#pageNext').addEventListener('click', () => { if (L.page < L.pages - 1) { L.page++; loadList(); } });
+
+$('#listSearch').addEventListener('input', (e) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { L.query = e.target.value.trim(); L.page = 0; loadList(); }, 250);
+});
+
 async function addToList() {
-  const inp = $('#listInput'); const val = inp.value.trim();
+  const inp = $('#listInput');
+  const val = inp.value.trim();
   if (!val) return;
-  try { await Z.listAdd(currentList, val); inp.value = ''; loadList(currentList); toast('Добавлено', 'ok'); }
-  catch (e) { toast('Ошибка: ' + e.message, 'err'); }
+  try {
+    const r = await Z.listAdd(L.which, val);
+    inp.value = '';
+    inp.style.height = 'auto';
+    let msg = r.added ? `Добавлено: ${r.added}` : 'Новых доменов нет';
+    if (r.dup) msg += `, уже были: ${r.dup}`;
+    if (r.bad.length) msg += `, отброшено неверных: ${r.bad.length}`;
+    toast(msg, r.added ? 'ok' : 'info');
+    L.page = 0; loadList();
+  } catch (e) { toast('Ошибка: ' + e.message, 'err'); }
 }
 $('#listAddBtn').addEventListener('click', addToList);
-$('#listInput').addEventListener('keydown', e => { if (e.key === 'Enter') addToList(); });
+// Enter — добавить, Shift+Enter — перенос строки (ввод многострочный).
+$('#listInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addToList(); }
+});
+// авто-высота textarea под содержимое
+$('#listInput').addEventListener('input', (e) => {
+  e.target.style.height = 'auto';
+  e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px';
+});
+
+// ---- пресеты доменов ----
+let presetCat = null;              // текущая категория { label, services }
+const svcChosen = new Set();       // ключи выбранных сервисов
+
+async function loadPresets() {
+  const row = $('#presetRow');
+  let presets = {};
+  try { presets = await Z.listPresets(); } catch {}
+  row.innerHTML = '';
+  for (const [key, cat] of Object.entries(presets)) {
+    const count = Object.keys(cat.services).length;
+    const btn = document.createElement('button');
+    btn.className = 'preset-btn';
+    btn.innerHTML = `<span></span><i>${count}</i>`;
+    btn.querySelector('span').textContent = cat.label;
+    btn.addEventListener('click', () => openPresetModal(cat));
+    row.appendChild(btn);
+  }
+}
+
+function svcUpdateCount() {
+  $('#svcCount').textContent = 'выбрано: ' + svcChosen.size;
+  const total = presetCat ? Object.keys(presetCat.services).length : 0;
+  $('#svcAll').textContent = svcChosen.size === total && total ? 'Снять все' : 'Выбрать все';
+}
+
+function openPresetModal(cat) {
+  presetCat = cat;
+  svcChosen.clear();
+  $('#presetTitle').textContent = 'Выбор сервисов — ' + cat.label;
+
+  const grid = $('#svcGrid');
+  grid.innerHTML = '';
+  for (const [key, svc] of Object.entries(cat.services)) {
+    const b = document.createElement('button');
+    b.className = 'svc-btn';
+    b.dataset.key = key;
+    b.innerHTML = `<span class="svc-name"></span><span class="svc-num">${svc.domains.length}</span>`;
+    b.querySelector('.svc-name').textContent = svc.label;
+    b.addEventListener('click', () => {
+      const on = b.classList.toggle('selected');
+      if (on) svcChosen.add(key); else svcChosen.delete(key);
+      svcUpdateCount();
+    });
+    grid.appendChild(b);
+  }
+  svcUpdateCount();
+  $('#presetModal').classList.remove('hidden');
+}
+
+function closePresetModal() { $('#presetModal').classList.add('hidden'); presetCat = null; svcChosen.clear(); }
+
+$('#svcAll').addEventListener('click', () => {
+  if (!presetCat) return;
+  const total = Object.keys(presetCat.services).length;
+  const selectAll = svcChosen.size !== total;
+  svcChosen.clear();
+  $$('#svcGrid .svc-btn').forEach(b => {
+    b.classList.toggle('selected', selectAll);
+    if (selectAll) svcChosen.add(b.dataset.key);
+  });
+  svcUpdateCount();
+});
+
+async function applyPreset(which) {
+  if (!presetCat) return;
+  if (!svcChosen.size) { toast('Выберите хотя бы один сервис', 'err'); return; }
+  // Собираем домены только выбранных сервисов.
+  const domains = [];
+  for (const key of svcChosen) domains.push(...presetCat.services[key].domains);
+  const catLabel = presetCat.label;
+  const n = svcChosen.size;
+  closePresetModal();
+  try {
+    const r = await Z.listAddPreset(which, domains);
+    const where = which === 'bypass' ? 'в обход' : 'в исключения';
+    if (r.added && r.dup) toast(`Добавлено ${r.added} доменов ${where} (${r.dup} уже были)`, 'ok');
+    else if (r.added) toast(`Добавлено ${r.added} доменов ${where} · сервисов: ${n}`, 'ok');
+    else toast('Все выбранные домены уже в списке', 'info');
+    if (which === L.which) { L.page = 0; loadList(); }
+  } catch (e) { toast('Ошибка: ' + e.message, 'err'); }
+}
+
+$('#presetToBypass').addEventListener('click', () => applyPreset('bypass'));
+$('#presetToExclude').addEventListener('click', () => applyPreset('exclude'));
+$('#presetCancel').addEventListener('click', closePresetModal);
+$('#presetModal').addEventListener('click', (e) => { if (e.target.id === 'presetModal') closePresetModal(); });
+
 
 // ----------------------------------------------------------- диагностика -----
 $('#runDiagBtn').addEventListener('click', async () => {
@@ -455,6 +714,7 @@ const T = {
   steps: 0,
   step: 0,
   pinned: null,           // host, чья справка открыта
+  simple: true,           // упрощённый режим вкладки (автоподбор)
 };
 
 const HINTS = {
@@ -680,9 +940,22 @@ Z.onTestEvent((ev) => {
       return;
     }
     if (ev.best) {
-      $('#testStatus').innerHTML =
-        `Лучший результат: <b>${ev.best.replace(/\.bat$/i, '')}</b> — он поднят наверх списка. Нажмите «Применить», чтобы включить его.`;
-      toast('Тест завершён', 'ok');
+      if (T.simple) {
+        // Упрощённый автоподбор: сразу включаем найденную лучшую стратегию.
+        $('#testStatus').innerHTML = `Лучшая стратегия — <b>${ev.best.replace(/\.bat$/i, '')}</b>. Включаю…`;
+        Z.installService(ev.best.endsWith('.bat') ? ev.best : ev.best + '.bat')
+          .then(() => {
+            selectedStrategy = ev.best.replace(/\.bat$/i, '');
+            $('#testStatus').innerHTML = `Готово — включена стратегия <b>${selectedStrategy}</b>.`;
+            toast('Подобрана и включена: ' + selectedStrategy, 'ok');
+            refreshStatus();
+          })
+          .catch(e => toast('Не удалось включить: ' + e.message, 'err'));
+      } else {
+        $('#testStatus').innerHTML =
+          `Лучший результат: <b>${ev.best.replace(/\.bat$/i, '')}</b> — он поднят наверх списка. Нажмите «Применить», чтобы включить его.`;
+        toast('Тест завершён', 'ok');
+      }
     } else {
       $('#testStatus').textContent = 'Ни одна стратегия не прошла проверки. Загляните в «Диагностику» — возможно, мешает другая программа.';
       toast('Рабочих стратегий не найдено', 'err');
@@ -708,14 +981,31 @@ $('#testRunBtn').addEventListener('click', async () => {
   testBusy(true);
   $('#testStatus').textContent = 'Готовлю чистую проверку…';
 
-  const target = $('#dpiTarget').value;
   let list = [];
   try { list = await Z.strategies(); } catch {}
-  if (target !== '__all__') list = [target];
   if (!list.length) { toast('Стратегии не найдены', 'err'); testBusy(false); return; }
 
+  if (T.simple) {
+    // Автоподбор: всегда полный перебор всех стратегий по трём ключевым сервисам,
+    // с базой без обхода. Режим здесь всегда 'standard' (базовый набор целей).
+    await Z.testRun('standard', list, true);
+    return;
+  }
+
+  const target = $('#dpiTarget').value;
+  if (target !== '__all__') list = [target];
   await Z.testRun(T.mode, list, $('#dpiBaseline').checked);
 });
+
+// Переключение вкладки тестов между полным и упрощённым видом.
+function applyTestMode(simple) {
+  T.simple = simple;
+  const view = document.querySelector('.view[data-view="tests"]');
+  if (!view) return;
+  view.querySelector('#simpleNote').classList.toggle('hidden', !simple);
+  view.querySelectorAll('.adv-only').forEach(el => el.classList.toggle('hidden', simple));
+  $('#testRunBtn').textContent = simple ? 'Подобрать автоматически' : 'Запустить тест';
+}
 
 testSetMode('standard');
 testLoadStrategies();
@@ -728,23 +1018,42 @@ testShowResultsPath();
  * задачу могли удалить снаружи, и локальный флаг тогда врал бы.
  */
 let autostartOn = false;
+let autostartHidden = true;        // true = трей, false = окном
 
-function autostartPaint(on) {
+function autostartPaint(on, hidden = autostartHidden) {
   autostartOn = on;
+  autostartHidden = hidden;
   const sw = $('#autoSwitch');
   sw.setAttribute('aria-checked', on ? 'true' : 'false');
   $('.auto-card').classList.toggle('on', on);
+
   const sub = $('#autoSub');
   sub.classList.toggle('on', on);
   sub.textContent = on
-    ? 'Включена: приложение стартует вместе с Windows и сразу сворачивается в трей.'
+    ? (hidden
+        ? 'Включена: приложение стартует с Windows и сворачивается в трей.'
+        : 'Включена: приложение стартует с Windows и открывается окном.')
     : 'Выключена: приложение придётся запускать вручную.';
+
+  // последний шаг схемы и подпись меняются под выбранный режим
+  $('#flowLast').textContent = hidden ? 'Прячется в трей' : 'Открывает окно';
+  $('#flowLastSub').textContent = hidden
+    ? 'окно не открывается, значок «ZH» рядом с часами'
+    : 'главное окно появляется сразу при входе';
+
+  // блок выбора режима активен только когда автозагрузка включена
+  const modeRow = $('#autoModeRow');
+  modeRow.classList.toggle('disabled', !on);
+  $$('#autoModeSeg .seg-btn').forEach(b => {
+    b.classList.toggle('active', (b.dataset.hidden === '1') === hidden);
+    b.disabled = !on;
+  });
 }
 
 async function autostartRefresh() {
   try {
     const r = await Z.autostartGet();
-    autostartPaint(!!r.enabled);
+    autostartPaint(!!r.enabled, r.hidden !== false);
   } catch {
     $('#autoSub').textContent = 'Не удалось проверить состояние задачи.';
   }
@@ -754,17 +1063,199 @@ $('#autoSwitch').addEventListener('click', async () => {
   const sw = $('#autoSwitch');
   const next = !autostartOn;
   sw.disabled = true;
-  autostartPaint(next);                      // отвечаем мгновенно, не ждём Планировщик
+  autostartPaint(next, autostartHidden);     // отвечаем мгновенно, не ждём Планировщик
   try {
-    const r = await Z.autostartSet(next);
-    autostartPaint(!!r.enabled);
+    const r = await Z.autostartSet(next, autostartHidden);
+    autostartPaint(!!r.enabled, r.hidden !== false);
     toast(r.enabled ? 'Автозагрузка включена' : 'Автозагрузка выключена', 'ok');
   } catch (e) {
-    autostartPaint(!next);                   // откатываем, если задача не создалась
+    autostartPaint(!next);                    // откатываем, если задача не создалась
     toast('Ошибка: ' + e.message, 'err');
   } finally {
     sw.disabled = false;
   }
 });
 
+// переключение режима трей/окно — пересоздаёт задачу с новым аргументом
+$$('#autoModeSeg .seg-btn').forEach(b => b.addEventListener('click', async () => {
+  if (!autostartOn) return;
+  const hidden = b.dataset.hidden === '1';
+  if (hidden === autostartHidden) return;
+  autostartPaint(true, hidden);
+  try {
+    await Z.autostartSet(true, hidden);
+    toast(hidden ? 'Будет запускаться в трее' : 'Будет открываться окном', 'ok');
+  } catch (e) { toast('Ошибка: ' + e.message, 'err'); }
+}));
+
 autostartRefresh();
+
+// ==================================================== индикаторы-лампочки =====
+/*
+ * Три лампы на стенде отражают доступность Discord / YouTube / Cloudflare.
+ * Данные шлёт монитор из main раз в 12 секунд. Клик по лампе открывает справку
+ * с расшифровкой цветов.
+ */
+let monitorInfo = [];
+let lampPinned = null;
+
+(async () => { try { monitorInfo = await Z.monitorInfo(); } catch {} })();
+
+Z.onMonitor((ev) => {
+  if (ev.type !== 'monitor') return;
+  for (const [key, val] of Object.entries(ev.states)) {
+    const lamp = document.querySelector(`.lamp[data-key="${key}"]`);
+    if (!lamp) continue;
+    lamp.classList.remove('ok', 'blocked', 'nonet');
+    lamp.classList.add(val.state);
+  }
+});
+
+function lampPopClose() {
+  $('#lampPop').classList.remove('open');
+  lampPinned = null;
+}
+function lampPopOpen(key) {
+  const info = monitorInfo.find(m => m.key === key) || { label: key, host: '' };
+  $('#lpTitle').textContent = info.label;
+  $('#lpHost').textContent = info.host;
+  $('#lampPop').classList.add('open');
+  lampPinned = key;
+}
+
+$$('.lamp').forEach(l => l.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const key = l.dataset.key;
+  if (lampPinned === key) lampPopClose(); else lampPopOpen(key);
+}));
+document.addEventListener('click', (e) => {
+  if (lampPinned && !e.target.closest('.lamp') && !e.target.closest('.lamp-pop')) lampPopClose();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') lampPopClose(); });
+
+// ==================================================== режим / темы ============
+/*
+ * Простой режим прячет продвинутые вкладки и показывает упрощённую вкладку тестов
+ * (автоподбор). Расширенный открывает всё. Выбор хранится в конфиге, применяется
+ * при запуске. Смена сопровождается анимацией: пункты меню нарастают/стакаются, а
+ * вкладка «тесты» коротко подсвечивается, потому что её содержимое меняется.
+ */
+// В простом режиме видно: панель, стратегии, тесты, диагностика, обновления, настройки.
+// Прячем: домены-и-списки, автозагрузка (тонкие настройки — для продвинутых).
+// В простом режиме остаются: панель, тесты, диагностика, обновления, настройки.
+// Прячем «стратегии» (ими рулит автоподбор), «домены-и-списки» и «автозагрузку».
+const SIMPLE_HIDDEN = ['strategies', 'lists', 'autostart'];
+let uiMode = 'simple';
+let uiTheme = 'violet';
+
+const THEMES = [
+  { key: 'violet',  color: '#8b5cf6', label: 'Фиолетовый' },
+  { key: 'black',   color: '#aab6cc', label: 'Графит' },
+  { key: 'green',   color: '#22c55e', label: 'Изумрудный' },
+  { key: 'pink',    color: '#ff4d8d', label: 'Розовый' },
+  { key: 'crimson', color: '#ff5545', label: 'Бордовый' },
+];
+
+function applyTheme(key) {
+  // Тема могла быть удалена (например, светлая) — откатываемся на дефолт.
+  if (!THEMES.some(t => t.key === key)) key = 'violet';
+  uiTheme = key;
+  document.documentElement.setAttribute('data-theme', key);
+  $$('#themeRow .theme-dot').forEach(d => d.classList.toggle('active', d.dataset.theme === key));
+}
+
+function buildThemeRow() {
+  const row = $('#themeRow');
+  if (!row || row.childElementCount) return;
+  for (const t of THEMES) {
+    const dot = document.createElement('button');
+    dot.className = 'theme-dot';
+    dot.dataset.theme = t.key;
+    dot.style.setProperty('--tw', t.color);
+    dot.title = t.label;
+    dot.setAttribute('aria-label', t.label);
+    dot.addEventListener('click', () => { applyTheme(t.key); Z.setPref('theme', t.key); });
+    row.appendChild(dot);
+  }
+}
+
+function applyMode(mode, { animate = false } = {}) {
+  uiMode = mode;
+  $$('#modeSeg .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+
+  const simple = mode === 'simple';
+  // если активна вкладка, которую простой режим прячет — уводим на панель
+  if (simple) {
+    const active = $('.nav-item.active');
+    if (active && SIMPLE_HIDDEN.includes(active.dataset.view)) {
+      document.querySelector('.nav-item[data-view="dashboard"]').click();
+    }
+  }
+
+  const hidden = $$('.nav-item').filter(b => SIMPLE_HIDDEN.includes(b.dataset.view));
+  // Первое применение (при старте) — мгновенно, без transition, иначе скрытые
+  // пункты на миг мелькнут и схлопнутся на глазах.
+  if (!animate) {
+    hidden.forEach(b => {
+      b.style.transition = 'none';
+      b.classList.toggle('mode-hidden', simple);
+      b.classList.toggle('mode-show', !simple);
+      void b.offsetWidth;
+      b.style.transition = '';
+    });
+    applyTestMode(simple);
+    const pb0 = $('#presetBlock');
+    if (pb0) pb0.classList.toggle('hidden', simple);
+    return;
+  }
+
+  // Волна света по вкладкам, затронутым сменой режима. Запускаем ДО схлопывания
+  // (при уходе в простой вкладки ещё видны) и с задержкой при раскрытии (даём
+  // появляющимся вкладкам набрать высоту, иначе блик рисуется в схлопнутом узле).
+  const flashWave = () => {
+    const affected = $$('.nav-item').filter(b =>
+      SIMPLE_HIDDEN.includes(b.dataset.view) || b.dataset.view === 'tests');
+    affected.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+    affected.forEach((nav, i) => setTimeout(() => {
+      nav.classList.remove('flash'); void nav.offsetWidth; nav.classList.add('flash');
+      setTimeout(() => nav.classList.remove('flash'), 750);
+    }, i * 90));
+  };
+  if (simple) flashWave();            // пункты ещё видны — блик успеет показаться
+  else setTimeout(flashWave, 260);    // ждём, пока появляющиеся раскроются (stagger)
+
+  hidden.forEach((b, i) => {
+    if (simple) {
+      b.classList.remove('mode-show');
+      b.classList.add('mode-hidden');
+    } else {
+      // нарастание с задержкой (stagger) при раскрытии
+      b.classList.remove('mode-hidden');
+      if (animate) {
+        b.style.transitionDelay = (i * 70) + 'ms';
+        setTimeout(() => { b.style.transitionDelay = ''; }, 400 + i * 70);
+      }
+      b.classList.add('mode-show');
+    }
+  });
+
+  // переключаем режим вкладки тестов и пресетов доменов
+  applyTestMode(simple);
+  const presetBlock = $('#presetBlock');
+  if (presetBlock) presetBlock.classList.toggle('hidden', simple);
+}
+
+$$('#modeSeg .seg-btn').forEach(b => b.addEventListener('click', () => {
+  if (b.dataset.mode === uiMode) return;
+  applyMode(b.dataset.mode, { animate: true });
+  Z.setPref('mode', b.dataset.mode);
+}));
+
+// применяем сохранённые режим и тему при старте
+(async () => {
+  buildThemeRow();
+  let cfg = {};
+  try { cfg = await Z.config(); } catch {}
+  applyTheme(cfg.theme || 'violet');
+  applyMode(cfg.mode || 'simple');
+})();

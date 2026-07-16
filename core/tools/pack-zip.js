@@ -32,7 +32,10 @@ console.log('> Готовлю staging…');
 fs.rmSync(STAGE, { recursive: true, force: true });
 fs.mkdirSync(DEST, { recursive: true });
 
-for (const item of ['main.js', 'preload.js', 'src', 'assets', 'tools']) {
+// Все .js из корня core (main.js, preload.js, presets.js и любые будущие) плюс
+// папки. Перечислять файлы вручную опасно: забытый require падает уже у людей.
+const rootJs = fs.readdirSync(CORE).filter(f => f.endsWith('.js'));
+for (const item of [...new Set([...rootJs, 'src', 'assets', 'tools'])]) {
   fs.cpSync(path.join(CORE, item), path.join(DEST, item), { recursive: true });
 }
 

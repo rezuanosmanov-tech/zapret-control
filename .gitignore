@@ -4,4 +4,5 @@ release/
 build-stage/
 runtime/
 Test results.txt
+zapret-log_*.txt
 nul

@@ -10,6 +10,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, nativeImage } = 
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const PRESETS = require('./presets');
 const { spawn, exec, execFile } = require('child_process');
 
 // ------------------------------------------------------------------ конфиг ---
@@ -41,9 +42,21 @@ const P = {
 // а мы декодируем как UTF-8, и текст превращается в кракозябры.
 function run(cmd, opts = {}) {
   const wrapped = `chcp 65001>nul & ${cmd}`;
+  const quiet = opts.quiet;                 // рутинный опрос статуса — не логируем
+  if (opts.quiet !== undefined) { opts = { ...opts }; delete opts.quiet; }
   return new Promise((resolve) => {
     exec(wrapped, { windowsHide: true, encoding: 'utf8', maxBuffer: 1024 * 1024 * 16, ...opts },
-      (err, stdout, stderr) => resolve({ code: err ? (err.code ?? 1) : 0, stdout: stdout || '', stderr: stderr || '' }));
+      (err, stdout, stderr) => {
+        const code = err ? (err.code ?? 1) : 0;
+        // В тех-лог пишем команды-действия и любые реальные ошибки. Частый опрос
+        // статуса (sc query / tasklist каждые 5 сек) помечен quiet и молчит,
+        // кроме случаев, когда команда неожиданно упала.
+        if (!quiet) {
+          logTech(`$ ${cmd}  →  code ${code}`);
+          if (stderr && stderr.trim()) logTech('  stderr: ' + stderr.trim().split(/\r?\n/)[0]);
+        }
+        resolve({ code, stdout: stdout || '', stderr: stderr || '' });
+      });
   });
 }
 // Выполнить PowerShell-скрипт и вернуть stdout.
@@ -56,7 +69,24 @@ function ps(script) {
 }
 
 let mainWindow = null;
-function log(line) { if (mainWindow) mainWindow.webContents.send('log', line); }
+/*
+ * Журнал в два слоя. log() — человеческие сообщения (их видит любой пользователь
+ * в простой вкладке). logTech() — сырой технический вывод (команды, коды, stderr).
+ * Оба слоя копятся в кольцевых буферах, чтобы кнопка «Сохранить лог» могла выгрузить
+ * их в файл даже то, что уже уехало за пределы видимой области.
+ */
+const LOG_BUF = { simple: [], tech: [] };
+const LOG_BUF_MAX = 2000;
+function sendLog(level, line) {
+  const stamped = `[${new Date().toLocaleTimeString()}] ${line}`;
+  LOG_BUF.tech.push(stamped);
+  if (level === 'simple') LOG_BUF.simple.push(stamped);
+  if (LOG_BUF.tech.length > LOG_BUF_MAX) LOG_BUF.tech.shift();
+  if (LOG_BUF.simple.length > LOG_BUF_MAX) LOG_BUF.simple.shift();
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('log', { level, line, ts: Date.now() });
+}
+function log(line)     { sendLog('simple', line); }   // видят все
+function logTech(line) { sendLog('tech', line); }      // только расширенная вкладка
 
 // Проверка прав администратора (net session возвращает 0 только под админом).
 async function isAdmin() {
@@ -213,15 +243,15 @@ async function getStatus() {
   if (!cfg.activePath || !fs.existsSync(P.service())) {
     return { ready: false };
   }
-  const tl = await run('tasklist /FI "IMAGENAME eq winws.exe"');
+  const tl = await run('tasklist /FI "IMAGENAME eq winws.exe"', { quiet: true });
   const winwsRunning = /winws\.exe/i.test(tl.stdout);
-  const svc = await run('sc query zapret');
+  const svc = await run('sc query zapret', { quiet: true });
   const serviceRunning = /RUNNING/i.test(svc.stdout);
   const serviceInstalled = !/1060|does not exist/i.test(svc.stdout) && svc.code === 0;
-  const wd = await run('sc query WinDivert');
+  const wd = await run('sc query WinDivert', { quiet: true });
   const windivert = /RUNNING/i.test(wd.stdout);
   // текущая стратегия из реестра
-  const reg = await run('reg query "HKLM\\System\\CurrentControlSet\\Services\\zapret" /v zapret-discord-youtube');
+  const reg = await run('reg query "HKLM\\System\\CurrentControlSet\\Services\\zapret" /v zapret-discord-youtube', { quiet: true });
   let strategy = null;
   const mm = reg.stdout.match(/zapret-discord-youtube\s+REG_SZ\s+(.+)/i);
   if (mm) strategy = mm[1].trim();
@@ -296,30 +326,94 @@ const LIST_FILES = {
   exclude: 'list-exclude-user.txt',  // домены В ИСКЛЮЧЕНИЯ (не трогать)
   ipexclude: 'ipset-exclude-user.txt', // IP/подсети в исключения
 };
-function listRead(which) {
-  const f = path.join(P.lists(), LIST_FILES[which]);
+
+/*
+ * Домены — недоверенные данные (импорт, чужой файл, ручной ввод). Каждую строку
+ * чистим и проверяем регуляркой, прежде чем писать в файл, который потом уходит
+ * в winws как --hostlist. Никаких shell-метасимволов, пробелов, управляющих
+ * символов: домены/подсети из букв, цифр, дефисов, точек и (для IP) слэша.
+ */
+const RE_DOMAIN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+const RE_IPNET  = /^(?:\d{1,3}\.){3}\d{1,3}(?:\/\d{1,2})?$/;
+
+function cleanEntry(raw, which) {
+  let s = String(raw).trim().toLowerCase();
+  if (!s || s.startsWith('#')) return null;
+  s = s.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, ''); // url -> host
+  if (which === 'ipexclude') return RE_IPNET.test(s) ? s : null;
+  return RE_DOMAIN.test(s) ? s : null;
+}
+
+function listPathOf(which) { return path.join(P.lists(), LIST_FILES[which]); }
+
+// Возвращает ВСЕ валидные строки файла. Тяжёлый вызов — не гонять его в интерфейс,
+// использовать только внутри main для операций записи/подсчёта.
+function listReadAll(which) {
   try {
-    return fs.readFileSync(f, 'utf8').split(/\r?\n/)
+    return fs.readFileSync(listPathOf(which), 'utf8').split(/\r?\n/)
       .map(x => x.trim()).filter(x => x && !x.startsWith('#'));
   } catch { return []; }
 }
-function listWrite(which, items) {
-  const f = path.join(P.lists(), LIST_FILES[which]);
+
+function listWriteAll(which, items) {
   fs.mkdirSync(P.lists(), { recursive: true });
   const uniq = [...new Set(items.map(x => x.trim()).filter(Boolean))];
-  fs.writeFileSync(f, uniq.join('\r\n') + '\r\n', 'utf8');
-  return uniq;
+  fs.writeFileSync(listPathOf(which), uniq.join('\r\n') + '\r\n', 'utf8');
+  return uniq.length;
 }
+
+/*
+ * Страница для интерфейса: сортировка и фильтр по подстроке считаются здесь, в
+ * интерфейс уходит только текущий срез (по умолчанию 50 строк) плюс общее число.
+ * Так хоть 430 000 доменов — окно получает максимум 50 и не захлёбывается на IPC.
+ */
+function listPage(which, { page = 0, pageSize = 50, query = '' } = {}) {
+  let items = listReadAll(which);
+  const q = String(query).trim().toLowerCase();
+  if (q) items = items.filter(x => x.toLowerCase().includes(q));
+  items.sort((a, b) => a.localeCompare(b));           // алфавит, файл на диске не трогаем
+  const total = items.length;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const p = Math.min(Math.max(0, page), pages - 1);
+  return { items: items.slice(p * pageSize, p * pageSize + pageSize), total, page: p, pages, pageSize };
+}
+
+// Добавление с валидацией. Возвращает, сколько добавили, сколько дублей, что отбраковали.
 function listAdd(which, value) {
-  const items = listRead(which);
-  for (const v of String(value).split(/[\s,]+/).map(x => x.trim()).filter(Boolean)) {
-    if (!items.includes(v)) items.push(v);
+  const existing = new Set(listReadAll(which));
+  const parts = String(value).split(/[\s,;]+/);
+  let added = 0, dup = 0; const bad = [];
+  for (const raw of parts) {
+    if (!raw.trim()) continue;
+    const clean = cleanEntry(raw, which);
+    if (!clean) { bad.push(raw.trim()); continue; }
+    if (existing.has(clean)) { dup++; continue; }
+    existing.add(clean); added++;
   }
-  return listWrite(which, items);
+  const total = listWriteAll(which, [...existing]);
+  return { added, dup, bad, total };
 }
+
+// Пакетное добавление пресета: та же валидация, отдельный ответ для окна выбора.
+function listAddPreset(which, arr) {
+  const existing = new Set(listReadAll(which));
+  let added = 0, dup = 0;
+  for (const raw of arr) {
+    const clean = cleanEntry(raw, which);
+    if (!clean) continue;
+    if (existing.has(clean)) { dup++; continue; }
+    existing.add(clean); added++;
+  }
+  const total = listWriteAll(which, [...existing]);
+  return { added, dup, total };
+}
+
 function listRemove(which, value) {
-  return listWrite(which, listRead(which).filter(x => x !== value));
+  const items = listReadAll(which).filter(x => x !== value);
+  return { total: listWriteAll(which, items) };
 }
+
+function listClear(which) { return { total: listWriteAll(which, []) }; }
 
 // ----------------------------------------------------------- диагностика ------
 async function diagnostics() {
@@ -486,6 +580,10 @@ async function applyZip(zipPath) {
   // Пользовательские файлы читаем В ПАМЯТЬ до того, как что-либо удалять:
   // если имя папки в архиве совпадёт с текущей установкой (переустановка той же
   // версии), dest === prev, и rmSync ниже снёс бы списки вместе с папкой.
+  //
+  // Переносим ВСЁ, что мог настроить пользователь: пользовательские списки,
+  // их IP-исключения, режим IPSet и флаги. Списки *-user трогает пользователь
+  // напрямую, поэтому они в приоритете.
   const USER_FILES = [
     ['lists', 'list-general-user.txt'],    // домены в обход
     ['lists', 'list-exclude-user.txt'],    // домены в исключения
@@ -505,6 +603,17 @@ async function applyZip(zipPath) {
     }
   }
 
+  // Запоминаем, что было включено ДО обновления: активную стратегию (она хранится
+  // в реестре, а не в файле, поэтому в USER_FILES её нет) и работал ли обход.
+  // После обновления восстановим службу с той же стратегией — иначе пользователь
+  // остался бы с выключенным обходом и «слетевшей» стратегией.
+  let priorStrategy = null, wasRunning = false;
+  try {
+    const st = await getStatus();
+    wasRunning = st.running;
+    priorStrategy = st.strategy || null;
+  } catch {}
+
   if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true });
   fs.cpSync(srcDir, dest, { recursive: true });
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -521,7 +630,21 @@ async function applyZip(zipPath) {
 
   const cfg = readConfig(); cfg.activePath = dest; writeConfig(cfg);
   log('Активная версия: ' + versionName);
-  return { ok: true, version: versionName, path: dest };
+
+  // Восстанавливаем обход на той же стратегии, если он был включён и такая
+  // стратегия есть в новой версии.
+  if (wasRunning && priorStrategy) {
+    const bat = priorStrategy.endsWith('.bat') ? priorStrategy : priorStrategy + '.bat';
+    if (fs.existsSync(path.join(dest, bat))) {
+      log('Восстанавливаю обход на прежней стратегии: ' + priorStrategy);
+      try { await installService(bat); }
+      catch (e) { log('Не удалось восстановить службу: ' + e.message); }
+    } else {
+      log('Прежняя стратегия «' + priorStrategy + '» отсутствует в новой версии — включите обход заново.');
+    }
+  }
+
+  return { ok: true, version: versionName, path: dest, restored: wasRunning && !!priorStrategy };
 }
 
 // ============================================================ тесты ===========
@@ -577,6 +700,69 @@ const TARGETS = [
 ];
 
 const targetsFor = (mode) => TARGETS.filter(t => mode === 'dpi' || t.tier === 'basic');
+
+// ------------------------------------------------- монитор индикаторов --------
+/*
+ * Три лампочки на стенде следят за главными сервисами. Проверка отдельная от
+ * вкладки «Тесты»: лёгкий TLS-хендшейк к одному хосту на сервис, раз в 12 секунд.
+ * Логика трёхцветная:
+ *   • сначала контрольный хост (заведомо доступный) — если и он не отвечает,
+ *     проблема в сети вообще, лампы серые «нет сети», а не красные;
+ *   • дальше целевые хосты: прошёл хендшейк — зелёный, оборвался — красный.
+ * Опрос редкий и с дебаунсом, чтобы лампы не мигали.
+ */
+const tls = require('tls');
+const MONITORS = [
+  { key: 'discord',    label: 'Discord',    host: 'gateway.discord.gg' },
+  { key: 'youtube',    label: 'YouTube',    host: 'www.youtube.com' },
+  { key: 'cloudflare', label: 'Cloudflare', host: 'www.cloudflare.com' },
+];
+// Контроль сети: несколько крупных хостов, которые почти никогда не блокируют.
+// Сеть считается живой, если ответил ХОТЬ ОДИН — один ненадёжный хост (как
+// msftconnecttest, который на 443 отвечает через раз) больше не гасит все лампы.
+const NET_CHECK_HOSTS = ['dns.google', 'one.one.one.one', 'yandex.ru'];
+let monitorTimer = null;
+
+function tlsProbe(host, timeout = 5000) {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const sock = tls.connect({ host, servername: host, port: 443, timeout }, () => {
+      sock.end(); resolve({ ok: true, ms: Date.now() - t0 });
+    });
+    sock.on('timeout', () => { sock.destroy(); resolve({ ok: false }); });
+    sock.on('error', () => resolve({ ok: false }));
+  });
+}
+
+async function hasNetwork() {
+  const results = await Promise.all(NET_CHECK_HOSTS.map(h => tlsProbe(h, 4000)));
+  return results.some(r => r.ok);
+}
+
+async function monitorTick() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  if (!await hasNetwork()) {
+    emit2('monitor', { states: Object.fromEntries(MONITORS.map(m => [m.key, { state: 'nonet' }])) });
+    return;
+  }
+  const states = {};
+  for (const m of MONITORS) {
+    const r = await tlsProbe(m.host);
+    states[m.key] = { state: r.ok ? 'ok' : 'blocked', ms: r.ms };
+  }
+  emit2('monitor', { states });
+}
+
+function startMonitor() {
+  if (monitorTimer) return;
+  monitorTick();
+  monitorTimer = setInterval(monitorTick, 12000);
+}
+function stopMonitor() { clearInterval(monitorTimer); monitorTimer = null; }
+
+// отдельный emit, чтобы не завязываться на канал тестов
+const emit2 = (type, data) => { if (mainWindow) mainWindow.webContents.send('monitor:event', { type, ...data }); };
 
 /*
  * Сколько ждём после запуска winws, прежде чем проверять. Драйвер WinDivert
@@ -637,6 +823,7 @@ async function runProbes(label, targets) {
 async function runSweep(mode, batList, withBaseline = true) {
   if (testBusy) return { busy: true };
   testBusy = true; testAbort = false;
+  stopMonitor();                       // во время перебора лампы не опрашиваем
 
   const targets = targetsFor(mode);
   const before = await getStatus();
@@ -680,6 +867,7 @@ async function runSweep(mode, batList, withBaseline = true) {
       await installService(restore.endsWith('.bat') ? restore : restore + '.bat');
     }
     testBusy = false;
+    startMonitor();                    // возвращаем опрос ламп
   }
 
   const real = out.filter(r => !r.baseline);
@@ -780,29 +968,34 @@ async function saveReport(mode, { results, best }) {
 const TASK_NAME = 'Zapret Control Autostart';
 
 // В dev это electron.exe + путь к папке core; в упакованном виде — сам exe.
-function autostartCmd() {
+// hidden=true → окно не показывается (трей); false → открывается обычным окном.
+function autostartCmd(hidden) {
   const exe = process.execPath;
   const packaged = app.isPackaged;
+  const flag = hidden ? ' --hidden' : '';
   return {
     exe,
-    args: packaged ? '--hidden' : `"${app.getAppPath()}" --hidden`,
+    args: packaged ? flag.trim() : `"${app.getAppPath()}"${flag}`,
     dir: packaged ? path.dirname(exe) : app.getAppPath(),
   };
 }
 
 async function autostartGet() {
-  const r = await run(`schtasks /query /tn "${TASK_NAME}"`);
-  return { enabled: r.code === 0 && !/ERROR|не найден|cannot find/i.test(r.stdout + r.stderr) };
+  const r = await run(`schtasks /query /tn "${TASK_NAME}" /xml`);
+  const enabled = r.code === 0 && !/ERROR|не найден|cannot find/i.test(r.stdout + r.stderr);
+  // Режим определяем по наличию --hidden в аргументах задачи.
+  const hidden = enabled ? /--hidden/.test(r.stdout) : true;
+  return { enabled, hidden };
 }
 
-async function autostartSet(on) {
+async function autostartSet(on, hidden = true) {
   if (!on) {
     await run(`schtasks /delete /tn "${TASK_NAME}" /f`);
     log('Автозагрузка отключена.');
     return autostartGet();
   }
 
-  const { exe, args, dir } = autostartCmd();
+  const { exe, args, dir } = autostartCmd(hidden);
   const user = `${process.env.USERDOMAIN || os.hostname()}\\${process.env.USERNAME || os.userInfo().username}`;
 
   // Через XML, а не через /tr: только так можно задать рабочую папку и уровень
@@ -893,14 +1086,23 @@ function showMainWindow() {
   mainWindow.focus();
 }
 
-function createTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png')).resize({ width: 32, height: 32 });
+// Единая точка выхода: помечаем намерение, закрываем окно, чистим трей. Дальше
+// отработают before-quit / will-quit, которые дожмут процесс, если он застрянет.
+function quitApp() {
+  app.isQuitting = true;
+  try { if (tray && !tray.isDestroyed()) tray.destroy(); } catch {}
+  tray = null;
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
+  app.quit();
+}
+
+function createTray() {  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png')).resize({ width: 32, height: 32 });
   tray = new Tray(icon);
   tray.setToolTip('Zapret Control');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Открыть Zapret Control', click: () => showMainWindow() },
     { type: 'separator' },
-    { label: 'Выход', click: () => { app.isQuitting = true; app.quit(); } },
+    { label: 'Выход', click: () => quitApp() },
   ]));
   tray.on('click', () => showMainWindow());
 }
@@ -920,6 +1122,13 @@ function reg() {
     return { ok: r.code === 0 };
   });
   H('config:get', () => readConfig());
+  H('config:setPref', (_e, key, value) => {
+    // Разрешаем менять только UI-предпочтения, не трогая служебные поля конфига.
+    const allowed = ['mode', 'theme'];
+    if (!allowed.includes(key)) return readConfig();
+    const cfg = readConfig(); cfg[key] = value; writeConfig(cfg);
+    return cfg;
+  });
   H('config:pickFolder', async () => {
     const r = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'], title: 'Выберите папку Zapret' });
     if (r.canceled || !r.filePaths[0]) return null;
@@ -953,10 +1162,12 @@ function reg() {
   H('autoupdate:get', () => autoUpdateGet());
   H('autoupdate:set', (_e, on) => autoUpdateSet(on));
 
-  H('list:read', (_e, w) => listRead(w));
+  H('list:page', (_e, w, opts) => listPage(w, opts));
   H('list:add', (_e, w, v) => listAdd(w, v));
+  H('list:addPreset', (_e, w, arr) => listAddPreset(w, arr));
   H('list:remove', (_e, w, v) => listRemove(w, v));
-  H('list:write', (_e, w, items) => listWrite(w, items));
+  H('list:clear', (_e, w) => listClear(w));
+  H('list:presets', () => PRESETS);
 
   H('diag:run', () => diagnostics());
   H('diag:fix', (_e, fix) => applyFix(fix));
@@ -965,8 +1176,35 @@ function reg() {
   H('update:checkApp', () => checkAppUpdate());
   H('update:ipset', () => updateIpset());
   H('update:hosts', () => updateHosts());
+  H('monitor:info', () => MONITORS.map(m => ({ key: m.key, label: m.label, host: m.host })));
+
+  H('log:save', async () => {
+    const st = await getStatus().catch(() => ({}));
+    const p2 = (n) => String(n).padStart(2, '0');
+    const d = new Date();
+    const stamp = `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}_${p2(d.getHours())}-${p2(d.getMinutes())}-${p2(d.getSeconds())}`;
+    const L = [];
+    L.push('ZAPRET CONTROL — журнал');
+    L.push('Сохранён: ' + d.toLocaleString());
+    L.push('Версия Zapret: ' + (st.version || '—') + ' | Стратегия: ' + (st.strategy || '—'));
+    L.push('');
+    L.push('========== ПРОСТОЙ ЖУРНАЛ ==========');
+    L.push(...(LOG_BUF.simple.length ? LOG_BUF.simple : ['(пусто)']));
+    L.push('');
+    L.push('========== РАСШИРЕННЫЙ ЖУРНАЛ ==========');
+    L.push(...(LOG_BUF.tech.length ? LOG_BUF.tech : ['(пусто)']));
+    L.push('');
+    // Рядом с core, как и отчёты тестов; при недоступности — в userData.
+    let dir = path.join(__dirname, '..');
+    try { fs.accessSync(dir, fs.constants.W_OK); } catch { dir = app.getPath('userData'); }
+    const file = path.join(dir, `zapret-log_${stamp}.txt`);
+    fs.writeFileSync(file, '\uFEFF' + L.join('\r\n') + '\r\n', 'utf8');
+    shell.showItemInFolder(file);
+    return { ok: true, file };
+  });
+
   H('autostart:get', () => autostartGet());
-  H('autostart:set', (_e, on) => autostartSet(on));
+  H('autostart:set', (_e, on, hidden) => autostartSet(on, hidden));
 
   H('test:run', (_e, mode, list, baseline) => runSweep(mode, list, baseline));
   H('test:abort', () => { testAbort = true; return { ok: true }; });
@@ -974,7 +1212,14 @@ function reg() {
   H('test:openResults', () => shell.openPath(testResultsFile()));
 
   H('open:external', (_e, url) => shell.openExternal(url));
-  H('open:folder', () => { const p = activePath(); if (p) shell.openPath(p); });
+  H('open:folder', async () => {
+    const p = activePath();
+    // При первой установке папка ещё не выбрана — раньше кнопка молча не работала.
+    if (!p) return { ok: false, reason: 'no-path' };
+    if (!fs.existsSync(p)) return { ok: false, reason: 'missing' };
+    const err = await shell.openPath(p);       // возвращает '' при успехе, текст ошибки иначе
+    return { ok: !err, reason: err || null };
+  });
 }
 
 // Второй запуск (с ярлыка, из трея, откуда угодно) не должен плодить окна и
@@ -1000,8 +1245,27 @@ app.whenReady().then(async () => {
 
   createWindow();
   createTray();
+  startMonitor();
   if (!elevated) log('Приложение работает без прав администратора. Часть функций недоступна.');
 });
-app.on('window-all-closed', () => { /* уходим в трей, не завершаем процесс */ });
-app.on('before-quit', () => { app.isQuitting = true; });
+// window-all-closed НЕ должен завершать процесс сам по себе (уходим в трей).
+// Но если запущен штатный выход (app.isQuitting) — не мешаем ему.
+app.on('window-all-closed', () => {
+  if (app.isQuitting) app.quit();
+});
+
+// Полный выход: гарантированно убираем иконку трея (иначе она держит процесс
+// живым, и electron.exe висит в диспетчере даже после «Выхода»).
+app.on('before-quit', () => {
+  app.isQuitting = true;
+  try { if (tray && !tray.isDestroyed()) tray.destroy(); } catch {}
+  tray = null;
+});
+
+// Страховка: если через полсекунды после запроса выхода процесс всё ещё жив
+// (застрял на висящей иконке или таймере) — принудительно завершаем.
+app.on('will-quit', () => {
+  setTimeout(() => { try { app.exit(0); } catch {} }, 500).unref?.();
+});
+
 app.on('activate', () => { showMainWindow(); });
