@@ -307,9 +307,15 @@ function ipsetSet(target) {
   const f = path.join(P.lists(), 'ipset-all.txt');
   const backup = f + '.backup';
   const cur = ipsetGet();
-  if (target === 'none' && cur === 'loaded') {
-    if (fs.existsSync(backup)) fs.unlinkSync(backup);
-    if (fs.existsSync(f)) fs.renameSync(f, backup);
+  if (target === 'none') {
+    // Бэкап делаем только из состояния "loaded" — там реальный список, который
+    // надо сохранить. Из "any" (пустой файл) бэкапить нечего, и раньше эта ветка
+    // вообще не срабатывала (условие требовало cur === 'loaded'), из-за чего
+    // переключение any → none молча ничего не делало.
+    if (cur === 'loaded') {
+      if (fs.existsSync(backup)) fs.unlinkSync(backup);
+      if (fs.existsSync(f)) fs.renameSync(f, backup);
+    }
     fs.writeFileSync(f, '203.0.113.113/32\n', 'utf8');
   } else if (target === 'any') {
     fs.writeFileSync(f, '', 'utf8');
@@ -1124,7 +1130,7 @@ function reg() {
   H('config:get', () => readConfig());
   H('config:setPref', (_e, key, value) => {
     // Разрешаем менять только UI-предпочтения, не трогая служебные поля конфига.
-    const allowed = ['mode', 'theme'];
+    const allowed = ['mode', 'theme', 'themeHue', 'sidebarCollapsed'];
     if (!allowed.includes(key)) return readConfig();
     const cfg = readConfig(); cfg[key] = value; writeConfig(cfg);
     return cfg;
@@ -1220,6 +1226,46 @@ function reg() {
     const err = await shell.openPath(p);       // возвращает '' при успехе, текст ошибки иначе
     return { ok: !err, reason: err || null };
   });
+
+  H('control:uninstallApp', () => uninstallApp());
+}
+
+/**
+ * Полное удаление ПРИЛОЖЕНИЯ Zapret Control — не Zapret/winws/службы: они
+ * живут своей жизнью (обычно в userData/installs или в папке, указанной
+ * вручную через "Указать папку"), и трогать их здесь не нужно, иначе обход
+ * перестанет работать ещё до установки новой версии панели. Снимаем только
+ * автозагрузку и стираем папку самого приложения (core/ + .bat-лаунчеры —
+ * см. core/tools/pack-zip.js, это ровно то, что лежит в раздаточном zip).
+ *
+ * Работающий electron.exe не может удалить свои же открытые файлы — поэтому
+ * пишем маленький .bat во временную папку: он ждёт, пока наш процесс (по PID)
+ * действительно завершится, стирает папку приложения и удаляет сам себя.
+ */
+async function uninstallApp() {
+  await autostartSet(false).catch(() => {});
+
+  const appRoot = path.dirname(app.getAppPath());
+  const pid = process.pid;
+  const helper = path.join(os.tmpdir(), `zapret-control-uninstall-${Date.now()}.bat`);
+  const script = [
+    '@echo off',
+    ':wait',
+    `tasklist /FI "PID eq ${pid}" 2>nul | find "${pid}" >nul`,
+    'if not errorlevel 1 (',
+    '  timeout /t 1 /nobreak >nul',
+    '  goto wait',
+    ')',
+    `rmdir /s /q "${appRoot}" 2>nul`,
+    'del "%~f0"',
+  ].join('\r\n');
+  fs.writeFileSync(helper, script, 'utf8');
+  spawn('cmd.exe', ['/c', helper], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+
+  // Небольшая задержка — чтобы ответ на этот IPC-вызов успел дойти до рендерера
+  // и тот показал сообщение, прежде чем окно закроется.
+  setTimeout(() => quitApp(), 400);
+  return { ok: true, appRoot };
 }
 
 // Второй запуск (с ярлыка, из трея, откуда угодно) не должен плодить окна и

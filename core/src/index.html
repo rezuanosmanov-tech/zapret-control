@@ -22,27 +22,31 @@
     <!-- боковая навигация -->
     <aside class="sidebar">
       <div class="brand">
-        <img class="brand-mark" src="../assets/logo-sidebar.png" alt="Zapret Control Panel" />
+        <img class="brand-mark" src="../assets/logo-sidebar.png" alt="Zapret Control Panel" draggable="false" />
         <div class="brand-text">
           <span class="brand-name">ZAPRET</span>
           <span class="brand-sub">control panel</span>
         </div>
       </div>
-      <nav class="nav">
-        <div class="nav-category">Приложение</div>
-        <button class="nav-item active" data-view="dashboard"><span class="tree">╔═</span>панель</button>
-        <button class="nav-item" data-view="strategies"><span class="tree">╠═</span>стратегии</button>
-        <button class="nav-item" data-view="lists"><span class="tree">╠═</span>домены-и-списки</button>
-        <button class="nav-item" data-view="diagnostics"><span class="tree">╠═</span>диагностика</button>
-        <button class="nav-item" data-view="tests"><span class="tree">╠═</span>тесты</button>
-        <button class="nav-item" data-view="autostart"><span class="tree">╠═</span>автозагрузка</button>
-        <button class="nav-item" data-view="updates"><span class="tree">╠═</span>обновления</button>
-        <button class="nav-item" data-view="settings"><span class="tree">╚═</span>настройки</button>
-      </nav>
+      <div class="nav-wrap" id="navWrap">
+        <button class="nav-collapse-pill" id="navCollapsePill" aria-label="Свернуть/развернуть меню" title="Свернуть/развернуть меню">
+          <span class="pill-diamond">◆</span>
+        </button>
+        <nav class="nav" id="nav">
+          <button class="nav-item active" data-view="dashboard"><span class="tree">╔═</span><span class="label">панель</span></button>
+          <button class="nav-item" data-view="strategies"><span class="tree">╠═</span><span class="label">стратегии</span></button>
+          <button class="nav-item" data-view="lists"><span class="tree">╠═</span><span class="label">домены-и-списки</span></button>
+          <button class="nav-item" data-view="diagnostics"><span class="tree">╠═</span><span class="label">диагностика</span></button>
+          <button class="nav-item" data-view="tests"><span class="tree">╠═</span><span class="label">тесты</span></button>
+          <button class="nav-item" data-view="autostart"><span class="tree">╠═</span><span class="label">автозагрузка</span></button>
+          <button class="nav-item" data-view="updates"><span class="tree">╠═</span><span class="label">обновления</span></button>
+          <button class="nav-item" data-view="settings"><span class="tree">╚═</span><span class="label">настройки</span></button>
+        </nav>
+      </div>
       <div class="sidebar-foot">
         <div id="adminBadge" class="admin-badge warn">Проверка прав…</div>
         <div class="version-line" id="versionLine">версия —</div>
-        <div class="credit-line">made by <span>_SAMOREZ_</span></div>
+        <div class="credit-line">made by <span>_SAMOREZ_</span> for zapret hub</div>
       </div>
     </aside>
 
@@ -436,9 +440,17 @@
         <div class="setting setting-theme">
           <div class="setting-text">
             <h3>Тема оформления</h3>
-            <p>Цвет плазмы ядра, свечения и акцентов.</p>
+            <p>Цвет плазмы ядра, свечения и акцентов. Фон и панели остаются тёмными — меняется только подсветка.</p>
           </div>
-          <div class="theme-row" id="themeRow"></div>
+          <div class="hue-picker-wrap">
+            <button class="hue-wheel-btn" id="hueWheelBtn" aria-label="Выбрать цвет акцента"></button>
+            <button class="hue-reset-btn" id="hueResetBtn" aria-label="Сбросить тему по умолчанию" title="Сбросить по умолчанию">↺</button>
+          </div>
+          <div class="hue-popover hidden" id="huePopover">
+            <div class="hue-wheel" id="hueWheel">
+              <div class="hue-wheel-cursor" id="hueWheelCursor"></div>
+            </div>
+          </div>
         </div>
 
         <div class="setting">
@@ -469,9 +481,36 @@
           <div class="setting-text"><h3>Проверять обновления</h3><p>Автопроверка новой версии при запуске.</p></div>
           <label class="switch"><input type="checkbox" id="autoUpdate" /><span class="slider"></span></label>
         </div>
+
+        <div class="danger-zone">
+          <div class="danger-zone-title">Опасная зона</div>
+          <div class="setting setting-danger">
+            <div class="setting-text">
+              <h3>Удалить приложение</h3>
+              <p>Стирает само приложение Zapret Control (папку, автозагрузку) — удобно перед установкой новой версии.
+                Сам обход Zapret и его служба не трогаются и продолжат работать.</p>
+            </div>
+            <button class="danger" id="uninstallAppBtn">Удалить</button>
+          </div>
+        </div>
       </section>
 
     </main>
+  </div>
+
+  <!-- подтверждение удаления приложения -->
+  <div class="modal-back hidden" id="uninstallModal">
+    <div class="modal">
+      <div class="modal-title">Удалить Zapret Control?</div>
+      <div class="modal-text">
+        Приложение закроется и его папка будет стёрта — это необратимо. Обход Zapret и его служба
+        Windows продолжат работать как есть, это удаляет только саму панель управления.
+      </div>
+      <div class="modal-actions" style="margin-top:18px">
+        <button class="ghost" id="uninstallCancel">Отмена</button>
+        <button class="danger" id="uninstallConfirm">Удалить и закрыть</button>
+      </div>
+    </div>
   </div>
 
   <div id="toast" class="toast"></div>

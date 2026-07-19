@@ -60,5 +60,7 @@ contextBridge.exposeInMainWorld('zapret', {
   openExternal:   (url) => invoke('open:external', url),
   openFolder:     () => invoke('open:folder'),
 
+  uninstallApp:   () => invoke('control:uninstallApp'),
+
   onLog:          (cb) => ipcRenderer.on('log', (_e, line) => cb(line)),
 });

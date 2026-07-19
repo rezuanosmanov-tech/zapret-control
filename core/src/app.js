@@ -215,7 +215,7 @@ async function refreshStatus() {
     $('#coreStrategy').textContent = 'укажите папку в «Настройки»';
     setStat('statWinws', '—', 'neutral'); setStat('statService', '—', 'neutral');
     setStat('statDivert', '—', 'neutral'); setStat('statGame', '—', 'neutral');
-    $('#versionLine').textContent = 'версия —';
+    $('#versionLine').textContent = 'версия запрета (—)';
     wasRunning = null;
     return;
   }
@@ -224,7 +224,7 @@ async function refreshStatus() {
   title.textContent = running ? 'Обход активен' : 'Обход остановлен';
   setCore(running ? 'on' : 'off', running ? 'Запрет включён' : 'Запрет выключен');
   $('#coreStrategy').textContent = st.strategy ? st.strategy : (selectedStrategy || 'стратегия не выбрана');
-  $('#versionLine').textContent = 'версия ' + (st.version || '—');
+  $('#versionLine').textContent = 'версия запрета (' + (st.version || '—') + ')';
 
   setStat('statWinws', st.winwsRunning ? 'работает' : 'выкл', st.winwsRunning ? 'on' : 'off');
   setStat('statService', st.serviceRunning ? 'RUNNING' : (st.serviceInstalled ? 'STOPPED' : 'нет'),
@@ -320,15 +320,18 @@ async function loadStrategies() {
     const name = f.replace(/\.bat$/i, '');
     const el = document.createElement('div');
     el.className = 'strategy' + (name === selectedStrategy || name === active ? ' active' : '');
+    // Имя — через textContent: это имя файла с диска, в нём может оказаться
+    // & или другой символ, который innerHTML истолкует как разметку.
     el.innerHTML = `
       <div>
-        <div class="strategy-name">${name}</div>
+        <div class="strategy-name"></div>
         ${name === active ? '<div class="strategy-badge">установлена как служба</div>' : ''}
       </div>
       <div class="strategy-actions">
         <button class="ghost run">Запустить</button>
         <button class="primary svc">Как службу</button>
       </div>`;
+    el.querySelector('.strategy-name').textContent = name;
     el.querySelector('.run').addEventListener('click', async () => {
       selectedStrategy = name;
       try { await Z.start(f); toast('Запущено (процесс): ' + name, 'ok'); }
@@ -365,8 +368,12 @@ const LIST_HINTS = {
   ipexclude: 'IP-адреса и подсети в исключения (ipset-exclude-user). Формат: 1.2.3.4 или 1.2.3.0/24.',
 };
 const PAGE_SIZE = 50;
-const L = { which: 'bypass', page: 0, query: '', pages: 1, total: 0, busy: false };
+const L = { which: 'bypass', page: 0, query: '', pages: 1, total: 0 };
 let searchTimer = null;
+// Счётчик поколений вместо флага «занято»: каждый вызов loadList перечёркивает
+// предыдущий. Раньше ранний return по busy молча съедал клик по другой вкладке
+// списков, пока грузилась текущая — приходилось кликать второй раз.
+let listGen = 0;
 
 $$('#listTabs .seg-btn').forEach(b => b.addEventListener('click', () => {
   $$('#listTabs .seg-btn').forEach(x => x.classList.remove('active'));
@@ -377,8 +384,7 @@ $$('#listTabs .seg-btn').forEach(b => b.addEventListener('click', () => {
 }));
 
 async function loadList() {
-  if (L.busy) return;
-  L.busy = true;
+  const gen = ++listGen;
   $('#listHint').textContent = LIST_HINTS[L.which];
 
   const box = $('#listItems');
@@ -386,7 +392,7 @@ async function loadList() {
 
   // Полосу подгрузки показываем только на больших списках — на мелких она бы
   // мелькала и раздражала.
-  const heavy = L.total > PAGE_SIZE || L.total === 0 && L.page === 0 && false;
+  const heavy = L.total > PAGE_SIZE;
   if (heavy) {
     loading.classList.remove('hidden');
     $('#llFill').style.width = '15%';
@@ -397,6 +403,9 @@ async function loadList() {
   let res;
   try { res = await Z.listPage(L.which, { page: L.page, pageSize: PAGE_SIZE, query: L.query }); }
   catch { res = { items: [], total: 0, page: 0, pages: 1 }; }
+  // Пока ждали ответ, пользователь запросил другую вкладку/страницу — этот
+  // результат устарел, его отрисует более свежий вызов.
+  if (gen !== listGen) return;
 
   if (heavy) $('#llFill').style.width = '75%';
 
@@ -442,7 +451,6 @@ async function loadList() {
     $('#llFill').style.width = '100%';
     setTimeout(() => { loading.classList.add('hidden'); box.classList.remove('dim'); }, 180);
   }
-  L.busy = false;
 }
 
 $('#pagePrev').addEventListener('click', () => { if (L.page > 0) { L.page--; loadList(); } });
@@ -678,6 +686,25 @@ $$('#ipsetSeg .seg-btn').forEach(b => b.addEventListener('click', async () => {
 $('#autoUpdate').addEventListener('change', async (e) => {
   await Z.autoUpdateSet(e.target.checked);
   toast('Автопроверка ' + (e.target.checked ? 'включена' : 'выключена'), 'ok');
+});
+
+// ---- удаление приложения (не трогает сам Zapret/службу — см. main.js uninstallApp) ----
+$('#uninstallAppBtn').addEventListener('click', () => $('#uninstallModal').classList.remove('hidden'));
+$('#uninstallCancel').addEventListener('click', () => $('#uninstallModal').classList.add('hidden'));
+$('#uninstallModal').addEventListener('click', (e) => {
+  if (e.target.id === 'uninstallModal') $('#uninstallModal').classList.add('hidden');
+});
+$('#uninstallConfirm').addEventListener('click', async (e) => {
+  e.target.disabled = true;
+  e.target.textContent = 'Удаляю…';
+  try {
+    await Z.uninstallApp();
+    toast('Приложение будет закрыто и удалено…', 'ok');
+  } catch (err) {
+    toast('Ошибка: ' + err.message, 'err');
+    e.target.disabled = false;
+    e.target.textContent = 'Удалить и закрыть';
+  }
 });
 
 // ------------------------------------------------------------------ старт ----
@@ -985,16 +1012,27 @@ $('#testRunBtn').addEventListener('click', async () => {
   try { list = await Z.strategies(); } catch {}
   if (!list.length) { toast('Стратегии не найдены', 'err'); testBusy(false); return; }
 
-  if (T.simple) {
-    // Автоподбор: всегда полный перебор всех стратегий по трём ключевым сервисам,
-    // с базой без обхода. Режим здесь всегда 'standard' (базовый набор целей).
-    await Z.testRun('standard', list, true);
-    return;
+  // testBusy(false) обычно приходит с событием 'done', но если сам вызов testRun
+  // упал (ошибка IPC) или main ответил «уже занят» — события 'done' не будет
+  // никогда, и без явного сброса кнопка «Запустить» осталась бы заблокирована
+  // до перезапуска приложения.
+  try {
+    let r;
+    if (T.simple) {
+      // Автоподбор: всегда полный перебор всех стратегий по трём ключевым
+      // сервисам, с базой без обхода ('standard' — базовый набор целей).
+      r = await Z.testRun('standard', list, true);
+    } else {
+      const target = $('#dpiTarget').value;
+      if (target !== '__all__') list = [target];
+      r = await Z.testRun(T.mode, list, $('#dpiBaseline').checked);
+    }
+    if (r && r.busy) { testBusy(false); toast('Тест уже выполняется', 'err'); }
+  } catch (e) {
+    testBusy(false);
+    $('#testStatus').textContent = 'Тест не запустился.';
+    toast('Ошибка теста: ' + e.message, 'err');
   }
-
-  const target = $('#dpiTarget').value;
-  if (target !== '__all__') list = [target];
-  await Z.testRun(T.mode, list, $('#dpiBaseline').checked);
 });
 
 // Переключение вкладки тестов между полным и упрощённым видом.
@@ -1146,37 +1184,266 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') lampPopClo
 // Прячем «стратегии» (ими рулит автоподбор), «домены-и-списки» и «автозагрузку».
 const SIMPLE_HIDDEN = ['strategies', 'lists', 'autostart'];
 let uiMode = 'simple';
-let uiTheme = 'violet';
+const DEFAULT_HUE = 258; // фиолетовый — прежний дефолт
+let uiHue = DEFAULT_HUE;
 
-const THEMES = [
-  { key: 'violet',  color: '#8b5cf6', label: 'Фиолетовый' },
-  { key: 'black',   color: '#aab6cc', label: 'Графит' },
-  { key: 'green',   color: '#22c55e', label: 'Изумрудный' },
-  { key: 'pink',    color: '#ff4d8d', label: 'Розовый' },
-  { key: 'crimson', color: '#ff5545', label: 'Бордовый' },
-];
+// Старые пресеты (до кругового пикера) хранили именованный ключ — переводим его
+// в примерно соответствующий оттенок, чтобы у уже настроивших тему людей выбор
+// не сбросился молча на дефолт при обновлении.
+const LEGACY_THEME_HUES = { violet: DEFAULT_HUE, black: 210, pink: 320, crimson: 5, green: 150 };
 
-function applyTheme(key) {
-  // Тема могла быть удалена (например, светлая) — откатываемся на дефолт.
-  if (!THEMES.some(t => t.key === key)) key = 'violet';
-  uiTheme = key;
-  document.documentElement.setAttribute('data-theme', key);
-  $$('#themeRow .theme-dot').forEach(d => d.classList.toggle('active', d.dataset.theme === key));
+// Три акцента (--red/--purple/--blue) считаются поворотом одного выбранного
+// оттенка на фиксированные углы — это тот же "рисунок", что был у исходной
+// фиолетовой палитры (red = purple+92°, blue = purple-42°), просто теперь
+// пользователь двигает не палитру целиком, а точку на цветовом круге. Фон,
+// панели и текст в это не входят — они не меняются, тема управляет только
+// подсветкой/акцентами, а не всем окном.
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const k = (n) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  const toHex = (x) => Math.round(255 * x).toString(16).padStart(2, '0');
+  return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`;
 }
 
-function buildThemeRow() {
-  const row = $('#themeRow');
-  if (!row || row.childElementCount) return;
-  for (const t of THEMES) {
-    const dot = document.createElement('button');
-    dot.className = 'theme-dot';
-    dot.dataset.theme = t.key;
-    dot.style.setProperty('--tw', t.color);
-    dot.title = t.label;
-    dot.setAttribute('aria-label', t.label);
-    dot.addEventListener('click', () => { applyTheme(t.key); Z.setPref('theme', t.key); });
-    row.appendChild(dot);
-  }
+function hueToAccents(hue) {
+  const h = ((hue % 360) + 360) % 360;
+  const rot = (dh) => (h + dh + 360) % 360;
+  return {
+    red: hslToHex(rot(92), 90, 62), purple: hslToHex(rot(0), 86, 66), blue: hslToHex(rot(-42), 88, 62),
+    redDim: hslToHex(rot(92), 62, 44), purpleDim: hslToHex(rot(0), 58, 48), blueDim: hslToHex(rot(-42), 60, 46),
+  };
+}
+
+// Используется для программных обновлений (открытие попапа, кнопка сброса) —
+// когда нет реального указателя, курсор сажаем на красивый фиксированный радиус.
+// Во время реального перетаскивания курсор ставится в positionHueCursorAtPoint —
+// строго туда, где палец/мышь, а не на этот условный радиус (см. pick()).
+function positionHueCursor(hue) {
+  const cursor = $('#hueWheelCursor'), wheel = $('#hueWheel');
+  if (!cursor || !wheel) return;
+  const r = wheel.clientWidth / 2 - 10;
+  const rad = (hue - 90) * Math.PI / 180;
+  cursor.style.left = (wheel.clientWidth / 2 + r * Math.cos(rad)) + 'px';
+  cursor.style.top = (wheel.clientHeight / 2 + r * Math.sin(rad)) + 'px';
+}
+
+// Цвет колеса — чистый hue (conic-gradient), радиус ни на что не влияет: любая
+// точка на одном луче из центра — один и тот же цвет. Поэтому курсору можно
+// безопасно следовать за РЕАЛЬНЫМ указателем (а не всегда прыгать на фиксированное
+// кольцо) — просто ограничиваем расстояние от центра, чтобы кружок не вылезал за
+// край колеса. Раньше курсор всегда рисовался на одном и том же радиусе, из-за
+// чего он «не двигался по цветам, только по кругу», не совпадая с точкой клика.
+function positionHueCursorAtPoint(dx, dy, wheel) {
+  const cursor = $('#hueWheelCursor');
+  if (!cursor) return;
+  const maxR = wheel.clientWidth / 2 - 10;
+  const dist = Math.hypot(dx, dy) || 1;
+  const scale = Math.min(dist, maxR) / dist;
+  cursor.style.left = (wheel.clientWidth / 2 + dx * scale) + 'px';
+  cursor.style.top = (wheel.clientHeight / 2 + dy * scale) + 'px';
+}
+
+function applyHue(hue, { persist = false } = {}) {
+  uiHue = ((hue % 360) + 360) % 360;
+  const c = hueToAccents(uiHue);
+  const root = document.documentElement.style;
+  root.setProperty('--red', c.red); root.setProperty('--blue', c.blue); root.setProperty('--purple', c.purple);
+  root.setProperty('--red-dim', c.redDim); root.setProperty('--blue-dim', c.blueDim); root.setProperty('--purple-dim', c.purpleDim);
+  root.setProperty('--grad', `linear-gradient(135deg, ${c.red} 0%, ${c.purple} 52%, ${c.blue} 100%)`);
+  positionHueCursor(uiHue);
+  if (persist) Z.setPref('themeHue', uiHue);
+}
+
+// Угол считаем от координат указателя относительно центра колеса — та же система
+// отсчёта (0° сверху, по часовой), что и у conic-gradient(from 0deg) в CSS.
+// Возвращает и dx/dy — они же используются, чтобы поставить курсор ровно туда,
+// где палец/мышь (см. positionHueCursorAtPoint), без повторного вычисления rect.
+function hueFromPointer(e, wheel) {
+  const rect = wheel.getBoundingClientRect();
+  const dx = e.clientX - (rect.left + rect.width / 2);
+  const dy = e.clientY - (rect.top + rect.height / 2);
+  const deg = Math.atan2(dy, dx) * 180 / Math.PI + 90;
+  return { hue: ((deg % 360) + 360) % 360, dx, dy };
+}
+
+function setupHuePicker() {
+  const btn = $('#hueWheelBtn'), pop = $('#huePopover'), wheel = $('#hueWheel'), resetBtn = $('#hueResetBtn');
+  if (!btn || !pop || !wheel) return;
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    pop.classList.toggle('hidden');
+    if (!pop.classList.contains('hidden')) positionHueCursor(uiHue);
+  });
+  document.addEventListener('click', (e) => {
+    if (!pop.classList.contains('hidden') && !pop.contains(e.target) && e.target !== btn) pop.classList.add('hidden');
+  });
+
+  let dragging = false;
+  const pick = (e, commit) => {
+    const { hue, dx, dy } = hueFromPointer(e, wheel);
+    applyHue(hue, { persist: commit });
+    positionHueCursorAtPoint(dx, dy, wheel);
+  };
+  wheel.addEventListener('pointerdown', (e) => { dragging = true; wheel.setPointerCapture(e.pointerId); pick(e, false); });
+  wheel.addEventListener('pointermove', (e) => { if (dragging) pick(e, false); });
+  wheel.addEventListener('pointerup', (e) => { if (!dragging) return; dragging = false; pick(e, true); });
+
+  resetBtn?.addEventListener('click', () => applyHue(DEFAULT_HUE, { persist: true }));
+}
+
+/* ---- сворачивание меню в «таблетку» с ромбиком ----
+ * Подпись каждой вкладки разбита на span.ch по буквам (см. CSS), чтобы буквы
+ * могли выезжать/уезжать по одной с нарастающей задержкой — каскад и по
+ * вкладкам (сверху вниз), и по буквам внутри одной подписи (слева направо).
+ *
+ * Обе стороны — СТРОГО последовательные фазы, каждая ждёт конца предыдущей
+ * (см. expandNav/collapseNav): кнопка никогда не наезжает шириной на ещё
+ * видимый текст — она узкая всегда, растёт только по высоте.
+ *
+ * Разворачивание (expandNav):
+ *   1) сайдбар раздвигается (.nav-collapsed снят — ширина едет 80→236px);
+ *   2) буквы выезжают из кнопки (.nav-labels-hidden снят);
+ *   3) кнопка сжимается по высоте и уезжает в маленький узел наверх (.nav-pill-full снят).
+ * Сворачивание (collapseNav) — те же классы, но в ОБРАТНОМ порядке: сначала
+ * кнопка вытягивается по высоте, потом буквы въезжают в неё (стаггер идёт в
+ * обратную сторону — последняя буква прячется первой), и только потом
+ * сужается сайдбар. Таблетка красится в var(--grad) — тот же градиент, что
+ * и у .primary, поэтому смена темы (applyHue) красит и её тоже.
+ */
+// Ускорено вдвое против исходных 500/700/320 — вся анимация ощущалась слишком
+// долгой (~1.5с на сворачивание). Коэффициенты стаггера в setNavCollapseDelays
+// тоже уменьшены пропорционально, иначе последняя буква самой длинной подписи
+// не успевала бы доехать за укороченный NAV_LETTERS_MS.
+const NAV_PILL_MS = 230;     // рост/сжатие кнопки по высоте
+const NAV_LETTERS_MS = 320;  // буквы успевают выехать/въехать все (с учётом стаггера)
+const NAV_SIDEBAR_MS = 190;  // ширина сайдбара
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+let navCollapsed = false;
+let navBusy = false;
+
+function wrapLabelChars() {
+  $$('.nav-item .label').forEach((label) => {
+    const text = label.textContent;
+    label.textContent = '';
+    for (const ch of text) {
+      const span = document.createElement('span');
+      span.className = 'ch';
+      span.textContent = ch === ' ' ? ' ' : ch;
+      label.appendChild(span);
+    }
+  });
+}
+
+// reverse=false — буквы выезжают слева направо (разворот); reverse=true — въезжают
+// обратно справа налево, то есть первой прячется последняя буква (сворачивание).
+function setNavCollapseDelays(reverse) {
+  $$('.nav-item').forEach((item, itemIdx) => {
+    const chars = [...item.querySelectorAll('.label .ch')];
+    const last = chars.length - 1;
+    chars.forEach((ch, chIdx) => {
+      const ci = reverse ? (last - chIdx) : chIdx;
+      ch.style.transitionDelay = (itemIdx * 16 + ci * 7) + 'ms';
+    });
+  });
+}
+
+async function expandNav() {
+  const sidebar = $('.sidebar');
+  sidebar.classList.remove('nav-collapsed');       // 1) сайдбар раздвигается
+  await sleep(NAV_SIDEBAR_MS);
+  setNavCollapseDelays(false);
+  sidebar.classList.remove('nav-labels-hidden');   // 2) буквы выезжают
+  await sleep(NAV_LETTERS_MS);
+  sidebar.classList.remove('nav-pill-full');       // 3) кнопка сжимается и уезжает наверх
+  await sleep(NAV_PILL_MS);
+}
+
+async function collapseNav() {
+  const sidebar = $('.sidebar');
+  sidebar.classList.add('nav-pill-full');          // 1) кнопка вытягивается по высоте
+  await sleep(NAV_PILL_MS);
+  setNavCollapseDelays(true);
+  sidebar.classList.add('nav-labels-hidden');      // 2) буквы въезжают в неё
+  await sleep(NAV_LETTERS_MS);
+  sidebar.classList.add('nav-collapsed');          // 3) сайдбар сужается
+  await sleep(NAV_SIDEBAR_MS);
+}
+
+async function toggleNavCollapse() {
+  if (navBusy) return;
+  navBusy = true;
+  navCollapsed = !navCollapsed;
+  await (navCollapsed ? collapseNav() : expandNav());
+  Z.setPref('sidebarCollapsed', navCollapsed);
+  navBusy = false;
+}
+
+// Восстановление сохранённого состояния при запуске — без анимации (иначе при
+// каждом старте с ранее свёрнутым меню проигрывался бы весь переход).
+function setNavStateInstant(collapsed) {
+  navCollapsed = collapsed;
+  const sidebar = $('.sidebar');
+  const affected = [sidebar, $('#navCollapsePill'), ...$$('.nav-item .label .ch')];
+  affected.forEach((el) => { if (el) el.style.transition = 'none'; });
+  sidebar.classList.toggle('nav-collapsed', collapsed);
+  sidebar.classList.toggle('nav-labels-hidden', collapsed);
+  sidebar.classList.toggle('nav-pill-full', collapsed);
+  void sidebar.offsetWidth;
+  affected.forEach((el) => { if (el) el.style.transition = ''; });
+}
+
+function setupNavCollapse() {
+  wrapLabelChars();
+  setNavCollapseDelays(false);
+  const pill = $('#navCollapsePill');
+  if (!pill) return;
+  pill.addEventListener('click', () => toggleNavCollapse());
+}
+
+/* ---- скользящие сегментные переключатели ----
+ * Во все .seg добавляется общая капсула-индикатор: при смене активной кнопки
+ * градиент не перерисовывается на новом месте мгновенно, а физически переезжает
+ * (left/width на transition). Активную кнопку ставят разные места кода
+ * (клики, loadSettings, applyMode), поэтому не патчим каждый обработчик, а
+ * следим MutationObserver'ом за классами кнопок — ловит все пути разом.
+ * ResizeObserver пересаживает капсулу БЕЗ анимации, когда сегмент меняет
+ * размер: например, вкладка с ним только что стала видимой (в display:none
+ * offsetLeft/offsetWidth нулевые, и капсула стояла бы в углу). */
+function setupSegSliders() {
+  $$('.seg').forEach((seg) => {
+    const ind = document.createElement('span');
+    ind.className = 'seg-indicator';
+    seg.prepend(ind);
+    seg.classList.add('has-indicator');
+
+    const place = () => {
+      const active = seg.querySelector('.seg-btn.active');
+      if (!active || !active.offsetWidth) { ind.style.opacity = '0'; delete ind.dataset.ready; return; }
+      ind.style.left = active.offsetLeft + 'px';
+      ind.style.width = active.offsetWidth + 'px';
+      ind.style.opacity = '1';
+    };
+    const placeInstant = () => {
+      ind.style.transition = 'none';
+      place();
+      void ind.offsetWidth;
+      ind.style.transition = '';
+      if (ind.style.opacity === '1') ind.dataset.ready = '1';
+    };
+    // Анимируем только переезд между кнопками; первое появление (актив ставится
+    // позже, асинхронно — например, loadSettings) — мгновенно, иначе капсула
+    // «прилетала» бы из нулевого угла.
+    const moveAnimated = () => { if (ind.dataset.ready) place(); else placeInstant(); };
+
+    placeInstant();
+    const mo = new MutationObserver(moveAnimated);
+    seg.querySelectorAll('.seg-btn').forEach(b => mo.observe(b, { attributes: true, attributeFilter: ['class'] }));
+    new ResizeObserver(placeInstant).observe(seg);
+  });
 }
 
 function applyMode(mode, { animate = false } = {}) {
@@ -1253,9 +1520,13 @@ $$('#modeSeg .seg-btn').forEach(b => b.addEventListener('click', () => {
 
 // применяем сохранённые режим и тему при старте
 (async () => {
-  buildThemeRow();
+  setupHuePicker();
+  setupNavCollapse();
+  setupSegSliders();
   let cfg = {};
-  try { cfg = await Z.config(); } catch {}
-  applyTheme(cfg.theme || 'violet');
+  try { cfg = await Z.getConfig(); } catch {}
+  const savedHue = typeof cfg.themeHue === 'number' ? cfg.themeHue : LEGACY_THEME_HUES[cfg.theme];
+  applyHue(savedHue ?? 258);
   applyMode(cfg.mode || 'simple');
+  setNavStateInstant(!!cfg.sidebarCollapsed);
 })();

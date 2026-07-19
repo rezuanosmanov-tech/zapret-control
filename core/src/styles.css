@@ -42,18 +42,100 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opa
 @keyframes slide{to{background-position:220% 0}}
 
 /* =============================================================== каркас ==== */
-.app{display:grid;grid-template-columns:236px 1fr;height:100vh}
+/* flex, а не grid — ширина сайдбара должна реально анимироваться (сворачивание
+   меню), а плавный transition на grid-template-columns поддерживается браузерами
+   не везде надёжно. width на флекс-элементе анимируется всегда. */
+.app{display:flex;height:100vh}
 
-.sidebar{background:linear-gradient(180deg,var(--bg-2),#0c0c14);
-  border-right:1px solid var(--stroke);display:flex;flex-direction:column;padding:20px 16px}
+.sidebar{width:236px;flex-shrink:0;overflow:hidden;
+  background:linear-gradient(180deg,var(--bg-2),#0c0c14);
+  border-right:1px solid var(--stroke);display:flex;flex-direction:column;padding:20px 16px;
+  transition:width .18s cubic-bezier(.3,.8,.3,1)}
+.sidebar.nav-collapsed{width:80px}
+
 .brand{display:flex;align-items:center;gap:13px;padding:6px 4px 22px}
+.sidebar.nav-collapsed .brand{justify-content:center}
 .brand-mark{width:62px;height:62px;border-radius:15px;object-fit:cover;flex-shrink:0;
-  box-shadow:0 0 0 1px rgba(255,255,255,.13), 0 0 26px rgba(139,92,246,.55), 0 8px 18px rgba(0,0,0,.5);}
+  box-shadow:0 0 0 1px rgba(255,255,255,.13), 0 0 26px rgba(139,92,246,.55), 0 8px 18px rgba(0,0,0,.5);
+  -webkit-user-drag:none;user-drag:none;-webkit-user-select:none;user-select:none;
+  transition:width .3s ease,height .3s ease}
+.sidebar.nav-collapsed .brand-mark{width:40px;height:40px;border-radius:11px}
+.brand-text{overflow:hidden;white-space:nowrap;max-width:160px;transition:opacity .2s ease,max-width .3s ease}
+.sidebar.nav-collapsed .brand-text{opacity:0;max-width:0}
 .brand-name{font-weight:800;letter-spacing:2.4px;font-size:17px;display:block;white-space:nowrap;
   background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
 .brand-sub{font-size:9.5px;letter-spacing:2.6px;text-transform:uppercase;color:var(--faint)}
 
-.nav{display:flex;flex-direction:column;gap:0;margin-top:6px}
+/* ---- сворачивание меню: три СТРОГО последовательные фазы ----
+ * Три независимых класса на .sidebar, которыми по очереди управляет app.js
+ * (см. expandNav/collapseNav) — каждая фаза ждёт, пока закончится предыдущая:
+ *   .nav-pill-full      — кнопка вытягивается по ВЫСОТЕ на весь список вкладок,
+ *                         оставаясь узкой (закрывает только колонку декоративных
+ *                         символов ╠═, а не всю строку с подписью — иначе она
+ *                         наезжала бы на ещё видимый текст);
+ *   .nav-labels-hidden  — буквы подписи въезжают в кнопку (или выезжают из неё) —
+ *                         запускается ТОЛЬКО когда кнопка уже полностью вытянута;
+ *   .nav-collapsed      — сайдбар сужается/расширяется, кнопка при этом становится
+ *                         чуть уже под новую ширину рельса.
+ * Свёртывание — в этом порядке (кнопка → буквы → сайдбар), разворот — в обратном.
+ * Таблетка красится в --grad (тот же градиент, что у .primary), поэтому смена
+ * темы (см. applyHue в app.js) красит и её тоже — без отдельного кода. */
+.nav-wrap{position:relative;padding-top:40px}
+/* left:24px (фиксированный отступ, НЕ 50%) — это X-координата центра колонки
+   декоративных символов ╠═ (.nav-item padding-left 12px + половина ширины .tree
+   24px = 24px), которая совпадает с центром .brand-mark, когда сайдбар свёрнут
+   (см. расчёт в .sidebar.nav-collapsed .brand). При 50%-центрировании относительно
+   ВСЕЙ ширины строки кнопка на развёрнутом сайдбаре уезжала в середину подписи и
+   резала текст — фиксированный левый отступ держит её над иконками всегда,
+   независимо от того, свёрнут сайдбар или ещё разворачивается. */
+/* overflow:hidden — чтобы бегущий блик (::before) не вылезал за скруглённые
+   углы; box-shadow даёт тонкую внутреннюю обводку + цветное свечение в тон
+   текущей темы (color-mix от var(--purple), реагирует на applyHue). */
+.nav-collapse-pill{position:absolute;z-index:6;top:0;left:24px;width:32px;height:28px;
+  transform:translateX(-50%);overflow:hidden;
+  display:flex;align-items:center;justify-content:center;border:0;cursor:pointer;
+  border-radius:14px;background:var(--grad);color:#fff;font-size:13px;
+  box-shadow:0 0 0 1px rgba(255,255,255,.16) inset, 0 6px 16px -4px rgba(0,0,0,.55),
+    0 0 16px -3px color-mix(in srgb, var(--purple) 60%, transparent);
+  transition:width .23s cubic-bezier(.3,.8,.3,1), height .23s cubic-bezier(.3,.8,.3,1),
+    border-radius .3s ease, filter .15s ease, box-shadow .3s ease}
+/* Бегущий диагональный блик — тонкий «сканирующий» акцент в духе остального
+   технологичного интерфейса (ср. .tunnel-line, .dpi-row.best). Непрерывный и
+   слабый, не мешает читать ромбик поверх него (тот — z-index:1, выше блика). */
+.nav-collapse-pill::before{content:"";position:absolute;inset:-70% -50%;z-index:0;
+  background:linear-gradient(115deg, transparent 42%, rgba(255,255,255,.4) 50%, transparent 58%);
+  animation:pill-sheen 3.4s ease-in-out infinite;pointer-events:none}
+@keyframes pill-sheen{0%,100%{transform:translateY(-65%)}50%{transform:translateY(65%)}}
+.nav-collapse-pill .pill-diamond{position:relative;z-index:1;
+  text-shadow:0 0 8px rgba(255,255,255,.85);filter:drop-shadow(0 0 3px rgba(255,255,255,.5))}
+.nav-collapse-pill:hover{filter:brightness(1.12);
+  box-shadow:0 0 0 1px rgba(255,255,255,.28) inset, 0 8px 20px -4px rgba(0,0,0,.6),
+    0 0 22px -2px color-mix(in srgb, var(--purple) 75%, transparent)}
+@media (prefers-reduced-motion:reduce){.nav-collapse-pill::before{animation:none}}
+/* Узкая на всю высоту — НЕ во всю ширину строки, только колонка иконок. */
+.sidebar.nav-pill-full .nav-collapse-pill{height:100%;width:26px;border-radius:14px}
+/* Когда сайдбар тоже сужен — кнопка чуть уже, под новую ширину рельса. */
+.sidebar.nav-collapsed.nav-pill-full .nav-collapse-pill{width:20px}
+
+/* Пока кнопка на весь список (свёрнуто или идёт переход) — вкладки под ней
+   должны исчезать ПОЛНОСТЬЮ: не только активная (background/полоска-индикатор),
+   но и подсветка при наведении (.nav-item:hover::before) на любую другую
+   вкладку. pointer-events:none — иначе курсор всё ещё «видит» кнопки под
+   кнопкой-таблеткой: наведение подсвечивает их (виден кусочек полоски-индикатора
+   из-за края таблетки), а щелчок может провалиться на скрытую вкладку вместо
+   самой таблетки, если клик придётся точно на её границу.
+   .tree тоже гасим отдельно (opacity, не только background) — это декоративный
+   символ ╠═, он рисуется поверх прозрачного фона как обычный текст и раньше
+   мог на пару пикселей вылезать из-за края узкой таблетки (26px/20px), особенно
+   у активной вкладки (там его непрозрачность выше — .active .tree{opacity:.9}).
+   Transition на .22s — примерно время роста самой таблетки по высоте (NAV_PILL_MS),
+   чтобы иконки угасали синхронно с тем, как таблетка визуально их накрывает, а
+   не исчезали резко до того, как до них дорастёт кнопка. */
+.sidebar.nav-pill-full .nav-item{background:transparent;pointer-events:none}
+.sidebar.nav-pill-full .nav-item::before{height:0}
+.sidebar.nav-pill-full .nav-item .tree{opacity:0}
+
+.nav{display:flex;flex-direction:column;gap:0}
 .nav-category{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--faint);
   font-weight:700;padding:14px 12px 6px}
 .nav-item{display:flex;align-items:center;gap:2px;padding:8px 12px;border:0;cursor:pointer;
@@ -61,7 +143,13 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opa
   font-family:var(--sans);text-align:left;transition:background .12s,color .12s;position:relative;
   overflow:hidden}
 .nav-item .tree{font-family:var(--mono);font-size:15px;font-weight:700;opacity:.5;width:24px;
-  flex-shrink:0;letter-spacing:-1px}
+  flex-shrink:0;letter-spacing:-1px;transition:opacity .22s ease}
+/* Буквы подписи вкладки — каждая в своём span.ch, чтобы уезжать/выезжать по
+   отдельности с нарастающей задержкой (см. setNavCollapseDelays в app.js). */
+.nav-item .label{display:inline-flex}
+.nav-item .label .ch{display:inline-block;overflow:hidden;max-width:22px;opacity:1;white-space:pre;
+  transition:max-width .14s cubic-bezier(.3,.8,.3,1), opacity .11s ease}
+.sidebar.nav-labels-hidden .nav-item .label .ch{max-width:0;opacity:0}
 .nav-item:hover{background:rgba(148,155,164,.09);color:var(--text)}
 .nav-item.active{background:rgba(148,155,164,.16);color:#fff;font-weight:600}
 .nav-item.active .tree{opacity:.9}
@@ -70,7 +158,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opa
 .nav-item:hover::before{height:18px}
 .nav-item.active::before{height:26px}
 
-.sidebar-foot{margin-top:auto;display:flex;flex-direction:column;gap:8px}
+.sidebar-foot{margin-top:auto;display:flex;flex-direction:column;gap:8px;transition:opacity .2s ease}
+.sidebar.nav-collapsed .sidebar-foot{opacity:0;pointer-events:none}
 .admin-badge{font-size:11px;padding:8px 10px;border-radius:9px;text-align:center;border:1px solid;
   position:relative;overflow:hidden}
 .admin-badge.ok{color:var(--blue);border-color:rgba(61,139,255,.35);background:rgba(61,139,255,.08)}
@@ -82,7 +171,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opa
   color:transparent;font-weight:700}
 
 /* ============================================================== контент ==== */
-.content{overflow-y:auto;padding:30px 34px 40px}
+.content{flex:1;min-width:0;overflow-y:auto;padding:30px 34px 40px}
 .content::-webkit-scrollbar{width:10px}
 .content::-webkit-scrollbar-thumb{background:var(--stroke);border-radius:10px;border:3px solid var(--bg)}
 .view.hidden{display:none}
@@ -105,8 +194,15 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opa
 @keyframes item-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 
 .view-head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px;gap:16px}
-.eyebrow{font-size:10.5px;letter-spacing:3px;text-transform:uppercase;color:var(--faint);margin-bottom:7px}
-h1{font-size:30px;font-weight:800;letter-spacing:-.5px}
+/* Надзаголовок в духе кода: моно-префикс "//" в цвет темы и затухающая линия
+   после текста — общий «технологичный» мотив для всех вкладок. */
+.eyebrow{font-size:10.5px;letter-spacing:3px;text-transform:uppercase;color:var(--faint);margin-bottom:7px;
+  display:flex;align-items:center;gap:9px;white-space:nowrap}
+.eyebrow::before{content:"//";font-family:var(--mono);letter-spacing:0;color:var(--purple);opacity:.85}
+.eyebrow::after{content:"";flex:0 1 130px;height:1px;
+  background:linear-gradient(90deg, color-mix(in srgb, var(--purple) 50%, transparent), transparent)}
+h1{font-size:30px;font-weight:800;letter-spacing:-.5px;
+  text-shadow:0 0 28px color-mix(in srgb, var(--purple) 30%, transparent)}
 .hint{color:var(--muted);font-size:13px;line-height:1.6;margin-bottom:20px;max-width:760px}
 .head-actions{display:flex;gap:10px}
 
@@ -123,6 +219,9 @@ button{font-family:var(--sans)}
 .mini{background:transparent;border:0;color:var(--faint);font-size:11px;cursor:pointer;
   position:relative;overflow:hidden;border-radius:6px}
 .mini:hover{color:var(--text)}
+.danger{background:transparent;color:var(--red);border:1px solid rgba(255,59,92,.4);padding:10px 18px;
+  border-radius:11px;font-size:13px;font-weight:600;cursor:pointer;transition:.15s}
+.danger:hover{background:var(--red);color:#fff;border-color:var(--red)}
 
 /* ============================================================ панель ======= */
 /* Регистрируем свойства: только так их можно плавно транзишить (иначе цвет ядра
@@ -345,7 +444,13 @@ button{font-family:var(--sans)}
 }
 
 .console-block{background:#08080e;border:1px solid var(--stroke);border-radius:var(--radius);overflow:hidden}
-.console-head{display:flex;align-items:center;justify-content:space-between;padding:10px 16px}
+.console-head{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;
+  border-bottom:1px solid var(--stroke)}
+/* «Живой» индикатор: журнал пишется в реальном времени. Дышит тем же ритмом,
+   что и лампы на стенде (общий keyframes lamp-breathe). */
+.console-head::after{content:"";width:7px;height:7px;border-radius:50%;flex:none;margin-left:12px;
+  background:var(--blue);box-shadow:0 0 8px var(--blue);animation:lamp-breathe 2.4s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.console-head::after{animation:none}}
 .console{font-family:var(--mono);font-size:12px;line-height:1.65;color:#b9b9d6;padding:14px 16px;
   height:180px;overflow-y:auto;white-space:pre-wrap;-webkit-user-select:text;user-select:text}
 .console::-webkit-scrollbar{width:8px}.console::-webkit-scrollbar-thumb{background:var(--stroke);border-radius:8px}
@@ -362,11 +467,24 @@ button{font-family:var(--sans)}
 .strategy-actions button{flex:1;font-size:12px;padding:8px}
 
 /* =============================================================== списки ==== */
-.seg{display:inline-flex;background:var(--panel);border:1px solid var(--stroke);border-radius:11px;padding:3px;gap:2px}
+/* position:relative — якорь для .seg-indicator (скользящей капсулы ниже). */
+.seg{display:inline-flex;background:var(--panel);border:1px solid var(--stroke);border-radius:11px;padding:3px;gap:2px;
+  position:relative}
 .seg-btn{background:transparent;border:0;color:var(--muted);padding:8px 15px;border-radius:8px;
-  font-size:12.5px;cursor:pointer;transition:.14s;position:relative;overflow:hidden}
+  font-size:12.5px;cursor:pointer;transition:.14s;position:relative;overflow:hidden;z-index:1}
 .seg-btn:hover{color:var(--text)}
+/* Градиент активной кнопки рисует НЕ сама кнопка, а общая капсула-индикатор,
+   которая переезжает между кнопками (см. setupSegSliders в app.js). Кнопке
+   остаётся только цвет текста. background тут — страховка на случай, если JS
+   не отработал: капсула перекроет его собой (z-index у неё ниже кнопок, но
+   фон кнопки прозрачный при работающем индикаторе — см. .seg.has-indicator). */
 .seg-btn.active{color:#fff;background:var(--grad);box-shadow:0 4px 14px rgba(109,63,214,.35)}
+.seg.has-indicator .seg-btn.active{background:transparent;box-shadow:none}
+.seg-indicator{position:absolute;top:3px;bottom:3px;left:0;width:0;border-radius:8px;z-index:0;
+  background:var(--grad);box-shadow:0 4px 14px rgba(109,63,214,.35);
+  opacity:0;pointer-events:none;
+  transition:left .26s cubic-bezier(.3,.8,.3,1), width .26s cubic-bezier(.3,.8,.3,1), opacity .18s ease}
+@media (prefers-reduced-motion:reduce){.seg-indicator{transition:opacity .18s ease}}
 
 .add-row{display:flex;gap:10px;margin-bottom:16px;max-width:760px;align-items:flex-start}
 .add-row textarea{flex:1;resize:none;min-height:42px;line-height:1.5;font-family:var(--sans);
@@ -488,6 +606,11 @@ input[type=search]::-webkit-search-cancel-button{filter:invert(.6)}
   background:var(--panel);border:1px solid var(--stroke);border-radius:var(--radius);padding:20px 22px;margin-bottom:14px}
 .setting-text h3{font-size:14.5px;margin-bottom:5px}
 .setting-text p{font-size:12.5px;color:var(--muted);line-height:1.5;max-width:520px}
+
+.danger-zone{margin-top:26px;padding-top:18px;border-top:1px dashed rgba(255,59,92,.3)}
+.danger-zone-title{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--red);
+  font-weight:700;margin-bottom:10px}
+.setting-danger{border-color:rgba(255,59,92,.28)}
 
 .switch{position:relative;width:50px;height:28px;flex-shrink:0}
 .switch input{display:none}
@@ -713,53 +836,52 @@ input[type=search]::-webkit-search-cancel-button{filter:invert(.6)}
 .log-actions{display:flex;gap:6px}
 
 /* ============================================================ темы =========== */
-/* Каждая тема задаёт ПОЛНЫЙ набор: три акцента, фон, панели, границы, текст и
-   градиент. Раньше темы меняли только акценты, поэтому фон и общий тон почти не
-   отличались — теперь тема перекрашивает интерфейс целиком. Смена — подмена
-   класса на <html>; ядро на @property плавно перетекает в новый цвет. */
-html[data-theme="violet"]{         /* по умолчанию — фиолетово-сине-красный */
-  --red:#ff3b5c; --blue:#3d8bff; --purple:#8b5cf6;
-  --red-dim:#c22946; --blue-dim:#2b62c9; --purple-dim:#6d3fd6;
-  --bg:#0b0b12; --bg-2:#0f0f18; --panel:#14141f; --panel-2:#191926; --stroke:#26263a;
-  --text:#edeef5; --muted:#9a9ab4; --faint:#6a6a82;
-  --grad:linear-gradient(135deg,#ff3b5c 0%,#8b5cf6 52%,#3d8bff 100%);
-}
-html[data-theme="black"]{          /* графит: холодные стальные акценты */
-  --red:#8a93a3; --blue:#aab6cc; --purple:#c8d1e0;
-  --red-dim:#565d6b; --blue-dim:#6d7889; --purple-dim:#8b95a6;
-  --bg:#050507; --bg-2:#0a0a0e; --panel:#101015; --panel-2:#16161d; --stroke:#24242f;
-  --text:#e6e8ef; --muted:#8b90a0; --faint:#5a5f6e;
-  --grad:linear-gradient(135deg,#6d7889 0%,#aab6cc 100%);
-}
-html[data-theme="pink"]{           /* розовый неон */
-  --red:#ff4d8d; --blue:#c04dff; --purple:#ff7ac0;
-  --red-dim:#cc2f6c; --blue-dim:#9433cc; --purple-dim:#cc5d99;
-  --bg:#120810; --bg-2:#170a14; --panel:#1d0f1a; --panel-2:#241422; --stroke:#3a2135;
-  --text:#f7e9f2; --muted:#c096b0; --faint:#8a6a80;
-  --grad:linear-gradient(135deg,#ff4d8d 0%,#ff7ac0 50%,#c04dff 100%);
-}
-html[data-theme="crimson"]{        /* бордовый */
-  --red:#ff5545; --blue:#ff8a3d; --purple:#e0405c;
-  --red-dim:#c23a2e; --blue-dim:#c26a2e; --purple-dim:#9c2940;
-  --bg:#0f0708; --bg-2:#14090a; --panel:#1a0e10; --panel-2:#221416; --stroke:#3a2022;
-  --text:#f7e6e6; --muted:#c0928f; --faint:#8a6663;
-  --grad:linear-gradient(135deg,#ff5545 0%,#e0405c 55%,#ff8a3d 100%);
-}
-html[data-theme="green"]{          /* изумрудный */
-  --red:#22c55e; --blue:#14b8a6; --purple:#4ade80;
-  --red-dim:#178f45; --blue-dim:#0e8579; --purple-dim:#2fa85c;
-  --bg:#07100b; --bg-2:#0a1610; --panel:#0e1c14; --panel-2:#13241a; --stroke:#1f3a2b;
-  --text:#e6f5ec; --muted:#8fbfa2; --faint:#5e8a70;
-  --grad:linear-gradient(135deg,#22c55e 0%,#4ade80 50%,#14b8a6 100%);
-}
-.theme-row{display:flex;gap:12px;flex-wrap:wrap}
-.theme-dot{width:34px;height:34px;border-radius:50%;cursor:pointer;border:2px solid transparent;
-  position:relative;transition:transform .2s ease, border-color .3s ease;
-  background:var(--tw)}
-.theme-dot:hover{transform:scale(1.1)}
-.theme-dot.active{border-color:#fff;box-shadow:0 0 0 2px var(--bg), 0 0 14px -2px var(--tw)}
-.theme-dot::after{content:"";position:absolute;inset:0;border-radius:50%;
-  box-shadow:inset 0 1px 2px rgba(255,255,255,.35), inset 0 -2px 3px rgba(0,0,0,.35)}
+/* Фон/панели/текст — ВСЕГДА постоянные (значения из :root вверху файла), тема их
+   не трогает. Пользователь одним круговым пикером выбирает ОДИН оттенок (hue);
+   из него на лету считаются три акцента (--red/--purple/--blue) поворотом по
+   кругу на фиксированные углы — так сохраняется тот же "рисунок" триады, что и
+   в исходной фиолетовой палитре, просто сдвинутый на новый базовый цвет.
+   Значения --red/--blue/--purple/*-dim/--grad подставляются инлайн-стилями на
+   <html> из applyHue() в app.js, а не CSS-классом — тут больше нечего описывать. */
+
+/* Попап якорится на всю карточку .setting-theme (см. ниже), а не на
+   .hue-picker-wrap — обёртка кнопок вертикально центрируется внутри строки
+   настройки (align-items:center у .setting) и сама намного ниже строки, поэтому
+   top:100% от НЕЁ раскрывал попап от середины карточки, а не от её низа, и
+   колесо наползало на следующую строку настроек.
+   z-index:1 обязателен, не только position:relative — без своего z-index
+   карточка не создаёт контекст наложения, и абсолютно спозиционированный попап
+   внутри нее проваливается ПОД соседние карточки настроек ниже по странице
+   (у них z-index:auto, но они идут позже в потоке и перекрывают попап). */
+.setting-theme{position:relative;z-index:1}
+.hue-picker-wrap{display:flex;align-items:center;gap:8px}
+.hue-wheel-btn{width:40px;height:40px;border-radius:50%;cursor:pointer;flex-shrink:0;
+  border:2px solid rgba(255,255,255,.28);
+  background:conic-gradient(from 0deg,#ff3b3b,#ffe63b,#3bff57,#3bfff2,#3b5bff,#c23bff,#ff3b3b);
+  transition:transform .18s ease, border-color .2s ease;box-shadow:0 4px 14px -4px rgba(0,0,0,.5)}
+.hue-wheel-btn:hover{transform:scale(1.08);border-color:rgba(255,255,255,.5)}
+
+.hue-reset-btn{width:34px;height:34px;border-radius:50%;flex-shrink:0;cursor:pointer;font-size:15px;
+  display:flex;align-items:center;justify-content:center;line-height:1;
+  background:var(--panel);color:var(--muted);border:1px solid var(--stroke);transition:.15s}
+.hue-reset-btn:hover{color:var(--text);border-color:var(--purple);transform:rotate(-45deg)}
+
+/* Якорь — .setting-theme (вся карточка), top:100% от неё = сразу под низом
+   карточки настройки, а не под серединой узкой .hue-picker-wrap. right:22px —
+   это правый паддинг .setting, так что попап встаёт вровень с правым краем
+   кнопок, а не уезжает за пределы окна (это уже было решено раньше). */
+.hue-popover{position:absolute;top:calc(100% + 12px);right:22px;z-index:40;padding:18px;
+  border-radius:20px;background:var(--panel-2);border:1px solid var(--stroke);
+  box-shadow:0 24px 60px -14px rgba(0,0,0,.65);animation:hue-pop-in .18s cubic-bezier(.2,.8,.3,1) both}
+.hue-popover.hidden{display:none}
+@keyframes hue-pop-in{from{opacity:0;transform:translateY(-6px) scale(.96)}to{opacity:1;transform:none}}
+
+.hue-wheel{position:relative;width:180px;height:180px;border-radius:50%;cursor:crosshair;
+  background:conic-gradient(from 0deg,#ff3b3b,#ffe63b,#3bff57,#3bfff2,#3b5bff,#c23bff,#ff3b3b);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.18), 0 0 30px -6px rgba(0,0,0,.5)}
+.hue-wheel-cursor{position:absolute;width:20px;height:20px;left:0;top:0;margin:-10px;border-radius:50%;
+  border:3px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.45), 0 2px 8px rgba(0,0,0,.45);
+  pointer-events:none;background:var(--purple)}
 
 /* ---- анимация появления пунктов меню при смене режима ----
    Простой режим прячет часть вкладок. При переходе в расширенный скрытые пункты
@@ -781,3 +903,37 @@ html[data-theme="green"]{          /* изумрудный */
 @keyframes nav-flash{to{transform:translateX(120%)}}
 
 .simple-note{margin-bottom:18px}
+
+/* ====================================================== техно-акценты ======= */
+/* Угловые «кронштейны» — как рамка прицела/чертежа: верхний-левый в фиолетовом,
+   нижний-правый в синем акценте темы. На карточках прорисовываются при
+   наведении (съезжаются из глубины карточки к углам), на модальных окнах
+   горят постоянно. Цвета через var(--purple)/var(--blue) — красятся темой. */
+:is(.setting,.update-card,.strategy,.diag-item,.card,.dropzone,.modal){position:relative}
+:is(.setting,.update-card,.strategy,.diag-item,.card,.dropzone,.modal)::before,
+:is(.setting,.update-card,.strategy,.diag-item,.card,.dropzone,.modal)::after{
+  content:"";position:absolute;width:15px;height:15px;pointer-events:none;z-index:2;
+  opacity:0;transition:opacity .28s ease, transform .28s ease}
+:is(.setting,.update-card,.strategy,.diag-item,.card,.dropzone,.modal)::before{
+  top:-1px;left:-1px;border-top:1.5px solid var(--purple);border-left:1.5px solid var(--purple);
+  border-top-left-radius:7px;transform:translate(5px,5px)}
+:is(.setting,.update-card,.strategy,.diag-item,.card,.dropzone,.modal)::after{
+  bottom:-1px;right:-1px;border-bottom:1.5px solid var(--blue);border-right:1.5px solid var(--blue);
+  border-bottom-right-radius:7px;transform:translate(-5px,-5px)}
+:is(.setting,.update-card,.strategy,.diag-item,.card,.dropzone):hover::before,
+:is(.setting,.update-card,.strategy,.diag-item,.card,.dropzone):hover::after,
+.modal::before,.modal::after{opacity:.85;transform:none}
+
+/* Границы карточек при наведении подкрашиваются в тон темы — раньше реагировали
+   только стратегии. */
+:is(.setting,.update-card,.diag-item):hover{
+  border-color:color-mix(in srgb, var(--purple) 32%, var(--stroke))}
+
+/* В «опасной зоне» кронштейны красные с обеих сторон — не смешиваем акценты
+   темы с сигнальным цветом удаления. */
+.setting-danger::before{border-color:rgba(255,59,92,.6)}
+.setting-danger::after{border-color:rgba(255,59,92,.6)}
+.setting-danger:hover{border-color:rgba(255,59,92,.45)}
+
+/* Пустые состояния — в терминальном моно-стиле. */
+.empty{font-family:var(--mono);font-size:12.5px;letter-spacing:.3px}
