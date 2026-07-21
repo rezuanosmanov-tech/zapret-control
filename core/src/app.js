@@ -255,9 +255,18 @@ $('#powerBtn').addEventListener('click', async () => {
     setTimeout(refreshStatus, 800);
   } else {
     const bat = selectedStrategy || lastStatus.strategy;
-    // Вкладка «Стратегии» в простом режиме скрыта, поэтому выбор показываем прямо
-    // здесь выпадающим списком, а не отправляем в несуществующую вкладку.
-    if (!bat) { await openStrategyPicker(); return; }
+    if (!bat) {
+      // Окно выбора стратегии — ТОЛЬКО в простом режиме: там вкладка «Стратегии»
+      // скрыта, и выбрать больше негде. В расширенном режиме вкладка доступна,
+      // поэтому не дублируем выбор всплывающим окном, а ведём пользователя туда.
+      if (uiMode === 'simple') {
+        await openStrategyPicker();
+      } else {
+        toast('Выберите стратегию во вкладке «Стратегии»', 'info');
+        document.querySelector('.nav-item[data-view="strategies"]').click();
+      }
+      return;
+    }
     startBypass(bat);
   }
 });
