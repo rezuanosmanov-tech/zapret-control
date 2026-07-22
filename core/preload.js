@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('zapret', {
   gameSet:        (m) => invoke('game:set', m),
   ipsetGet:       () => invoke('ipset:get'),
   ipsetSet:       (t) => invoke('ipset:set', t),
+  fakesList:      () => invoke('fakes:list'),
+  fakesApply:     (slot, file) => invoke('fakes:apply', slot, file),
   autoUpdateGet:  () => invoke('autoupdate:get'),
   autoUpdateSet:  (on) => invoke('autoupdate:set', on),
 

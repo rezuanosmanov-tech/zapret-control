@@ -1,6 +1,6 @@
 {
   "name": "zapret-control",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Графический интерфейс управления Zapret HUB (обвязка над Flowseal zapret-discord-youtube)",
   "main": "main.js",
   "author": "_SAMOREZ_",

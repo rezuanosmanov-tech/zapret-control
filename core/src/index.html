@@ -9,15 +9,6 @@
 <body>
   <div class="tunnel-line"></div>
 
-  <!-- overlay для перетаскивания zip -->
-  <div id="dropOverlay" class="drop-overlay">
-    <div class="drop-card">
-      <div class="drop-orb"></div>
-      <h2>Отпустите архив</h2>
-      <p>Новая версия Zapret будет распакована и подхвачена автоматически</p>
-    </div>
-  </div>
-
   <div class="app">
     <!-- боковая навигация -->
     <aside class="sidebar">
@@ -35,6 +26,7 @@
         <nav class="nav" id="nav">
           <button class="nav-item active" data-view="dashboard"><span class="tree">╔═</span><span class="label">панель</span></button>
           <button class="nav-item" data-view="strategies"><span class="tree">╠═</span><span class="label">стратегии</span></button>
+          <button class="nav-item" data-view="fakes"><span class="tree">╠═</span><span class="label">фейки</span></button>
           <button class="nav-item" data-view="lists"><span class="tree">╠═</span><span class="label">домены-и-списки</span></button>
           <button class="nav-item" data-view="diagnostics"><span class="tree">╠═</span><span class="label">диагностика</span></button>
           <button class="nav-item" data-view="tests"><span class="tree">╠═</span><span class="label">тесты</span></button>
@@ -255,6 +247,51 @@
         </div>
       </div>
 
+      <!-- ФЕЙКИ -->
+      <section class="view hidden" data-view="fakes">
+        <header class="view-head">
+          <div><div class="eyebrow">тонкая настройка под провайдера</div><h1>Фейки</h1></div>
+        </header>
+
+        <div class="note" id="fakesNote">
+          <span class="note-icon">i</span>
+          <div class="note-body">
+            <div class="note-title">Что это такое</div>
+            <div class="note-text">
+              Обход иногда обманывает провайдера, подсовывая ему поддельный кусочек данных.
+              У разных провайдеров эта уловка проходит по-разному: один вариант помогает
+              звонкам в Discord, другой — играм. Здесь можно попробовать разные варианты и
+              посмотреть, какой сработает лучше именно у вас. Это не сломает программу —
+              переключить обратно можно в любой момент.
+            </div>
+          </div>
+        </div>
+
+        <div id="fakesUnsupported" class="empty hidden">
+          Эта функция появилась в Zapret 1.10.0. У вашей версии её ещё нет — обновите Zapret
+          во вкладке «Обновления», чтобы получить точную настройку под провайдера.
+          <div style="margin-top:12px"><button class="ghost" id="fakesGoUpdates">Перейти в «Обновления»</button></div>
+        </div>
+
+        <div id="fakesBody" class="fake-body">
+          <div class="card fake-block" data-slot="discord">
+            <div class="fake-head">
+              <div class="fake-title">Discord (звонки)</div>
+              <div class="fake-current">сейчас: <span id="fakeCurrentDiscord">—</span></div>
+            </div>
+            <div class="chip-list" id="fakeListDiscord"></div>
+          </div>
+
+          <div class="card fake-block" data-slot="game">
+            <div class="fake-head">
+              <div class="fake-title">Игры</div>
+              <div class="fake-current">сейчас: <span id="fakeCurrentGame">—</span></div>
+            </div>
+            <div class="chip-list" id="fakeListGame"></div>
+          </div>
+        </div>
+      </section>
+
       <!-- ДИАГНОСТИКА -->
       <section class="view hidden" data-view="diagnostics">
         <header class="view-head">
@@ -325,6 +362,18 @@
         </div>
 
         <div class="dpi-results" id="dpiResults"></div>
+
+        <div class="note">
+          <span class="note-icon">i</span>
+          <div class="note-body">
+            <div class="note-title">Голос и игры этот тест не проверяет</div>
+            <div class="note-text">
+              Здесь проверяются только сайты. Если не работает звонок в Discord или игра —
+              загляните во вкладку «Фейки» и проверьте эффект вручную: зайдите в голосовой
+              канал или запустите игру после переключения.
+            </div>
+          </div>
+        </div>
 
         <div class="note" id="testNote">
           <span class="note-icon">i</span>
@@ -404,8 +453,27 @@
         <div class="dropzone" id="dropZone">
           <div class="dropzone-orb"></div>
           <h3>Обновление из архива</h3>
-          <p>Перетащите сюда zip новой версии — или выберите файл. Ваши списки и настройки перенесутся автоматически.</p>
+          <p>Выберите zip новой версии — ваши списки и настройки перенесутся автоматически.</p>
           <button class="ghost" id="pickZipBtn">Выбрать zip</button>
+        </div>
+
+        <div class="note">
+          <span class="note-icon">i</span>
+          <div class="note-body">
+            <div class="note-title">Зачем нужны кнопки ниже</div>
+            <div class="note-text">
+              <b>IPSet-список</b> — это адреса, которые Zapret обходит напрямую, по IP, а не по
+              имени сайта. Часть сервисов блокируют именно по адресу — без свежего списка такие
+              сайты обход не подхватит. Кнопка «Обновить» просто скачивает актуальный список с
+              сервера разработчиков Zapret.
+              <br><br>
+              <b>Файл hosts</b> — системный список Windows, где можно вручную подменить адрес
+              сайта. Иногда там случайно оказываются записи, которые мешают открыть YouTube или
+              другие сервисы. Кнопка «Проверить» смотрит, не устарел ли ваш файл, и если нужно —
+              открывает готовый файл с исправлениями. Сама ничего в системе не меняет — вносить
+              правки в hosts всё равно нужно вручную.
+            </div>
+          </div>
         </div>
 
         <div class="update-row">

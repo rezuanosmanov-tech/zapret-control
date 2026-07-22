@@ -10,6 +10,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, nativeImage } = 
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const PRESETS = require('./presets');
 const { spawn, exec, execFile } = require('child_process');
 
@@ -215,6 +216,7 @@ async function startProcess(batName) {
   log('Запуск winws.exe как процесс, стратегия: ' + batName);
   winwsChild = spawn(winws, argv, { cwd: P.bin(), detached: true, windowsHide: true, stdio: 'ignore' });
   winwsChild.unref();
+  lastStartedBat = batName;
   return { ok: true, mode: 'process' };
 }
 
@@ -234,6 +236,7 @@ async function installService(batName) {
   log(r.stdout + r.stderr);
   const name = path.basename(batName, '.bat');
   await run(`reg add "HKLM\\System\\CurrentControlSet\\Services\\zapret" /v zapret-discord-youtube /t REG_SZ /d "${name}" /f >nul 2>&1`);
+  lastStartedBat = batName;
   return { ok: r.code === 0, mode: 'service' };
 }
 
@@ -270,13 +273,23 @@ async function getStatus() {
 }
 
 // ---------------------------------------------------------- переключатели -----
+/*
+ * Вкладку «Настройки» можно открыть ДО того, как пользователь вообще указал
+ * папку Zapret (activePath === null) — она не спрятана и не блокируется в
+ * простом первом запуске. Без этой проверки path.join(null, …) внутри P.utils()/
+ * P.lists() кидает TypeError, который в рендерере либо тихо обрывает остаток
+ * loadSettings() (game/autoUpdate не подхватывают try/catch на вызове), либо
+ * всплывает уродливым системным текстом ошибки при клике по переключателю.
+ */
 function gameFilterGet() {
+  if (!activePath()) return 'off';
   const flag = path.join(P.utils(), 'game_filter.enabled');
   if (!fs.existsSync(flag)) return 'off';
   const m = (fs.readFileSync(flag, 'utf8').trim().toLowerCase()) || 'off';
   return ['all', 'tcp', 'udp'].includes(m) ? m : 'off';
 }
 function gameFilterSet(mode) {
+  if (!activePath()) throw new Error('Сначала укажите папку Zapret.');
   const flag = path.join(P.utils(), 'game_filter.enabled');
   fs.mkdirSync(P.utils(), { recursive: true });
   if (mode === 'off') { if (fs.existsSync(flag)) fs.unlinkSync(flag); }
@@ -284,9 +297,11 @@ function gameFilterSet(mode) {
   return gameFilterGet();
 }
 function autoUpdateGet() {
+  if (!activePath()) return false;
   return fs.existsSync(path.join(P.utils(), 'check_updates.enabled'));
 }
 function autoUpdateSet(on) {
+  if (!activePath()) throw new Error('Сначала укажите папку Zapret.');
   const flag = path.join(P.utils(), 'check_updates.enabled');
   fs.mkdirSync(P.utils(), { recursive: true });
   if (on) fs.writeFileSync(flag, 'ENABLED', 'utf8');
@@ -295,6 +310,7 @@ function autoUpdateSet(on) {
 }
 // IPSet: loaded / none / any
 function ipsetGet() {
+  if (!activePath()) return 'any';
   const f = path.join(P.lists(), 'ipset-all.txt');
   let content = '';
   try { content = fs.readFileSync(f, 'utf8'); } catch { return 'any'; }
@@ -304,6 +320,7 @@ function ipsetGet() {
   return 'loaded';
 }
 function ipsetSet(target) {
+  if (!activePath()) throw new Error('Сначала укажите папку Zapret.');
   const f = path.join(P.lists(), 'ipset-all.txt');
   const backup = f + '.backup';
   const cur = ipsetGet();
@@ -362,6 +379,10 @@ function listReadAll(which) {
 }
 
 function listWriteAll(which, items) {
+  // Тот же класс проблемы, что и с переключателями выше: вкладка «Списки»
+  // доступна в расширенном режиме и без выбранной папки Zapret — без проверки
+  // P.lists() кинул бы TypeError вместо понятной ошибки при попытке добавить домен.
+  if (!activePath()) throw new Error('Сначала укажите папку Zapret.');
   fs.mkdirSync(P.lists(), { recursive: true });
   const uniq = [...new Set(items.map(x => x.trim()).filter(Boolean))];
   fs.writeFileSync(listPathOf(which), uniq.join('\r\n') + '\r\n', 'utf8');
@@ -420,6 +441,92 @@ function listRemove(which, value) {
 }
 
 function listClear(which) { return { total: listWriteAll(which, []) }; }
+
+// ------------------------------------------------------------------- фейки ----
+/*
+ * Zapret 1.10.0 добавил «активные» слоты fake-файлов: все стратегии теперь
+ * ссылаются не на конкретный .bin, а на ACTIVE_DISCORD_UDP.bin/ACTIVE_GAME_UDP.bin
+ * в bin/. Смена fake — это просто copy поверх активного файла; определяем
+ * текущий выбор по SHA256 (так же, как это делает сам service.bat, пункт 7).
+ */
+const FAKE_SLOTS = {
+  discord: 'ACTIVE_DISCORD_UDP.bin',
+  game:    'ACTIVE_GAME_UDP.bin',
+};
+
+function sha256File(p) {
+  return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+}
+
+function fakesList() {
+  // activePath() может быть null (папка Zapret ещё не указана) — path.join(null, …)
+  // внутри P.bin() кинул бы TypeError вместо аккуратного "не поддерживается".
+  if (!activePath()) return { supported: false, files: [], active: {} };
+  const dir = P.bin();
+  if (!fs.existsSync(dir)) return { supported: false, files: [], active: {} };
+
+  const activeHashes = {};
+  for (const [slot, name] of Object.entries(FAKE_SLOTS)) {
+    const p = path.join(dir, name);
+    if (fs.existsSync(p)) { try { activeHashes[slot] = sha256File(p); } catch {} }
+  }
+  // Наличие хотя бы одного ACTIVE_*.bin — признак того, что установлена версия
+  // Zapret 1.10.0+ с поддержкой этой функции.
+  const supported = Object.keys(activeHashes).length > 0;
+  if (!supported) return { supported: false, files: [], active: {} };
+
+  const files = fs.readdirSync(dir)
+    .filter(f => /\.bin$/i.test(f) && !Object.values(FAKE_SLOTS).includes(f))
+    .map(name => {
+      let hash = null;
+      try { hash = sha256File(path.join(dir, name)); } catch {}
+      return { name, hash };
+    });
+
+  const active = {};
+  for (const slot of Object.keys(FAKE_SLOTS)) {
+    const match = files.find(f => f.hash && f.hash === activeHashes[slot]);
+    active[slot] = match ? match.name : null;
+  }
+  return { supported: true, files: files.map(({ name }) => ({ name })), active };
+}
+
+// Что было запущено последним "как процесс" (без службы) — единственный способ
+// узнать, какую стратегию перезапускать после смены fake, если обход поднят не
+// службой. Служба хранит имя стратегии в реестре (см. getStatus()), процесс — нет.
+let lastStartedBat = null;
+
+async function fakesApply(slot, fileName) {
+  if (!FAKE_SLOTS[slot]) throw new Error('Неизвестный тип fake: ' + slot);
+  if (!activePath()) throw new Error('Сначала укажите папку Zapret.');
+  const dir = P.bin();
+  // fileName приходит из рендерера — доверяем только точному совпадению с реально
+  // существующим .bin файлом в bin/, никаких путей и ".." не пропускаем.
+  const candidates = fs.readdirSync(dir).filter(f => /\.bin$/i.test(f) && !Object.values(FAKE_SLOTS).includes(f));
+  if (!candidates.includes(fileName)) throw new Error('Файл не найден: ' + fileName);
+
+  const source = path.join(dir, fileName);
+  const target = path.join(dir, FAKE_SLOTS[slot]);
+  fs.copyFileSync(source, target);
+  log(`Fake «${slot === 'discord' ? 'Discord UDP' : 'GameFilter UDP'}» заменён на: ${fileName}`);
+
+  // Если обход сейчас работает — winws уже прочитал старый файл в память при
+  // старте, поэтому без перезапуска изменение не подхватится. Перезапускаем той
+  // же стратегией, тем же способом (служба/процесс), которым он был поднят.
+  let restarted = false;
+  const st = await getStatus();
+  if (st.running) {
+    const bat = st.strategy
+      ? (st.strategy.endsWith('.bat') ? st.strategy : st.strategy + '.bat')
+      : lastStartedBat;
+    if (bat && fs.existsSync(path.join(activePath(), bat))) {
+      if (st.serviceInstalled) await installService(bat);
+      else await startProcess(bat);
+      restarted = true;
+    }
+  }
+  return { ...fakesList(), restarted };
+}
 
 // ----------------------------------------------------------- диагностика ------
 async function diagnostics() {
@@ -806,15 +913,37 @@ function probe(host, timeout = 6000) {
   });
 }
 
+/*
+ * Пробы независимы (разные хосты, разные сокеты) и почти всё время ждут сеть,
+ * а не грузят CPU — гоняем их пулом из нескольких воркеров вместо очереди по
+ * одному. 3 одновременно — с запасом быстрее (особенно на 16 целях DPI Check),
+ * но не настолько много, чтобы наплодить нечестных таймаутов на медленной сети
+ * или ударить по ещё не прогревшемуся после запуска winws перехвату.
+ */
+const PROBE_CONCURRENCY = 3;
+
 async function runProbes(label, targets) {
   const results = [];
-  for (const t of targets) {
-    if (testAbort) break;
-    emit('probe', { config: label, host: t.host, group: t.group, state: 'run' });
-    const r = await probe(t.host);
-    results.push({ host: t.host, group: t.group, ...r });
-    emit('probe', { config: label, host: t.host, group: t.group, state: r.ok ? 'ok' : 'fail', ms: r.ms, error: r.error });
+  let next = 0;
+
+  async function worker() {
+    while (next < targets.length) {
+      if (testAbort) return;
+      const t = targets[next++];
+      emit('probe', { config: label, host: t.host, group: t.group, state: 'run' });
+      const r = await probe(t.host);
+      results.push({ host: t.host, group: t.group, ...r });
+      emit('probe', { config: label, host: t.host, group: t.group, state: r.ok ? 'ok' : 'fail', ms: r.ms, error: r.error });
+    }
   }
+
+  const workers = Array.from({ length: Math.min(PROBE_CONCURRENCY, targets.length) }, () => worker());
+  await Promise.all(workers);
+
+  // Воркеры финишируют вразнобой — сортируем обратно в исходном порядке целей,
+  // чтобы прогресс-бар и итоговый отчёт оставались предсказуемыми между прогонами.
+  results.sort((a, b) => targets.findIndex(x => x.host === a.host) - targets.findIndex(x => x.host === b.host));
+
   const ok = results.filter(r => r.ok);
   return {
     results,
@@ -988,9 +1117,25 @@ function autostartCmd(hidden) {
 
 async function autostartGet() {
   const r = await run(`schtasks /query /tn "${TASK_NAME}" /xml`);
-  const enabled = r.code === 0 && !/ERROR|не найден|cannot find/i.test(r.stdout + r.stderr);
+  let enabled = r.code === 0 && !/ERROR|не найден|cannot find/i.test(r.stdout + r.stderr);
   // Режим определяем по наличию --hidden в аргументах задачи.
   const hidden = enabled ? /--hidden/.test(r.stdout) : true;
+
+  // Задача существует в Планировщике — это ещё не значит, что она реально
+  // запустится: если приложение с тех пор переустановили в другую папку (новый
+  // релиз, перенос диска), <Command> в задаче указывает на путь, которого больше
+  // нет. Планировщик в этом случае не запускает задачу и НЕ показывает пользователю
+  // никакой ошибки — тумблер в интерфейсе продолжал бы врать "включено". Проверяем
+  // существование exe из задачи и, если он пропал, считаем автозагрузку выключенной,
+  // чтобы пользователь увидел off и просто включил её заново на актуальном пути.
+  if (enabled) {
+    const cmdMatch = r.stdout.match(/<Command>([^<]+)<\/Command>/i);
+    const exePath = cmdMatch ? cmdMatch[1].trim() : null;
+    if (exePath && !fs.existsSync(exePath)) {
+      enabled = false;
+      log('Автозагрузка настроена на путь, которого больше нет: ' + exePath + ' — включите заново.');
+    }
+  }
   return { enabled, hidden };
 }
 
@@ -1003,6 +1148,15 @@ async function autostartSet(on, hidden = true) {
 
   const { exe, args, dir } = autostartCmd(hidden);
   const user = `${process.env.USERDOMAIN || os.hostname()}\\${process.env.USERNAME || os.userInfo().username}`;
+
+  // Приложение обычно скачивают архивом (Telegram/браузер) и распаковывают —
+  // Windows помечает исполняемый файл меткой "из интернета" (Zone.Identifier).
+  // При ручном двойном клике SmartScreen хотя бы покажет предупреждение, которое
+  // можно закрыть; задача Планировщика запускается в фоне без интерфейса, и для
+  // непроверенного exe с этой меткой Windows может тихо заблокировать запуск —
+  // без единой ошибки, ровно как в этом отчёте. Снимаем метку заранее; не
+  // получится (нет прав/файл занят) — не страшно, просто не подчистили.
+  await ps(`Unblock-File -LiteralPath '${exe}' -ErrorAction SilentlyContinue`);
 
   // Через XML, а не через /tr: только так можно задать рабочую папку и уровень
   // прав, а кавычки внутри /tr на путях с пробелами разбираются криво.
@@ -1026,7 +1180,14 @@ async function autostartSet(on, hidden = true) {
     </Principal>
   </Principals>
   <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <!-- Parallel, а не IgnoreNew: если предыдущий запуск не завершился штатно
+         (жёсткое завершение, сбой питания, taskkill) — Планировщик может решить,
+         что задача "всё ещё выполняется", и на IgnoreNew молча пропустит следующий
+         триггер входа в систему, без единой ошибки для пользователя. Дублирование
+         процессов нам не грозит: у приложения свой замок на один экземпляр
+         (app.requestSingleInstanceLock() в main.js) — лишний запуск сам увидит,
+         что окно уже есть, и тихо покажет его вместо создания второго. -->
+    <MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <AllowHardTerminate>true</AllowHardTerminate>
@@ -1165,6 +1326,8 @@ function reg() {
   H('game:set', (_e, m) => gameFilterSet(m));
   H('ipset:get', () => ipsetGet());
   H('ipset:set', (_e, t) => ipsetSet(t));
+  H('fakes:list', () => fakesList());
+  H('fakes:apply', (_e, slot, fileName) => fakesApply(slot, fileName));
   H('autoupdate:get', () => autoUpdateGet());
   H('autoupdate:set', (_e, on) => autoUpdateSet(on));
 

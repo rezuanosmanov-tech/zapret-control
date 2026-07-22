@@ -81,6 +81,7 @@ $$('.nav-item').forEach(btn => btn.addEventListener('click', () => {
     }
   });
   if (v === 'strategies') loadStrategies();
+  if (v === 'fakes') loadFakes();
   if (v === 'tests') testLoadStrategies();
   if (v === 'autostart') autostartRefresh();
   if (v === 'lists') { loadList(); loadPresets(); }
@@ -259,7 +260,18 @@ $('#powerBtn').addEventListener('click', async () => {
       // Окно выбора стратегии — ТОЛЬКО в простом режиме: там вкладка «Стратегии»
       // скрыта, и выбрать больше негде. В расширенном режиме вкладка доступна,
       // поэтому не дублируем выбор всплывающим окном, а ведём пользователя туда.
-      if (uiMode === 'simple') {
+      //
+      // Режим читаем из конфига ЗАНОВО, а не из переменной uiMode: она при
+      // старте до ответа config:get равна дефолту 'simple' (см. объявление ниже),
+      // а config:get и status:get — два независимых запроса, которые ничем не
+      // синхронизированы. Если пользователь жмёт «Старт» сразу после открытия
+      // окна (типичный сценарий — автозагрузка, сразу после входа в Windows) и
+      // uiMode ещё не успела обновиться, расширенный режим по ошибке ловил
+      // попап простого режима. Прямой запрос конфига стоит один быстрый IPC-вызов
+      // и полностью убирает гонку.
+      let mode = uiMode;
+      try { mode = (await Z.getConfig()).mode || 'simple'; } catch {}
+      if (mode === 'simple') {
         await openStrategyPicker();
       } else {
         toast('Выберите стратегию во вкладке «Стратегии»', 'info');
@@ -362,6 +374,50 @@ async function loadStrategies() {
     list.appendChild(el);
   }
 }
+
+// ---------------------------------------------------------------- фейки ------
+const FAKE_SLOT_LABEL = { discord: 'Discord UDP', game: 'GameFilter UDP' };
+
+function renderFakeSlot(slot, files, activeName) {
+  const list = $(`#fakeList${slot === 'discord' ? 'Discord' : 'Game'}`);
+  const cur = $(`#fakeCurrent${slot === 'discord' ? 'Discord' : 'Game'}`);
+  cur.textContent = activeName || 'не определён';
+  list.innerHTML = '';
+  for (const f of files) {
+    const chip = document.createElement('div');
+    chip.className = 'chip fake-chip' + (f.name === activeName ? ' active' : '');
+    chip.textContent = f.name;
+    chip.addEventListener('click', async () => {
+      if (f.name === activeName) return;
+      try {
+        const r = await Z.fakesApply(slot, f.name);
+        toast(
+          r.restarted
+            ? `${FAKE_SLOT_LABEL[slot]} заменён, обход перезапущен`
+            : `${FAKE_SLOT_LABEL[slot]} заменён. Применится при следующем запуске обхода`,
+          'ok'
+        );
+        renderFakeSlot('discord', r.files, r.active.discord);
+        renderFakeSlot('game', r.files, r.active.game);
+      } catch (e) { toast('Ошибка: ' + e.message, 'err'); }
+    });
+    list.appendChild(chip);
+  }
+}
+
+async function loadFakes() {
+  let data;
+  try { data = await Z.fakesList(); } catch { data = { supported: false, files: [], active: {} }; }
+  $('#fakesUnsupported').classList.toggle('hidden', data.supported);
+  $('#fakesBody').classList.toggle('hidden', !data.supported);
+  if (!data.supported) return;
+  renderFakeSlot('discord', data.files, data.active.discord);
+  renderFakeSlot('game', data.files, data.active.game);
+}
+
+$('#fakesGoUpdates')?.addEventListener('click', () => {
+  document.querySelector('.nav-item[data-view="updates"]').click();
+});
 
 // --------------------------------------------------------------- списки ------
 /*
@@ -642,28 +698,6 @@ async function pickZip() {
     if (r) { toast('Установлена версия ' + r.version, 'ok'); afterInstall(); }
   } catch (e) { toast('Ошибка: ' + e.message, 'err'); }
 }
-
-// ----------------------------------------------- drag&drop zip по всему окну -
-let dragDepth = 0;
-const overlay = $('#dropOverlay');
-window.addEventListener('dragenter', (e) => { e.preventDefault(); dragDepth++; overlay.classList.add('show'); });
-window.addEventListener('dragover', (e) => { e.preventDefault(); });
-window.addEventListener('dragleave', (e) => { e.preventDefault(); if (--dragDepth <= 0) overlay.classList.remove('show'); });
-window.addEventListener('drop', async (e) => {
-  e.preventDefault(); dragDepth = 0; overlay.classList.remove('show');
-  const file = e.dataTransfer.files[0];
-  if (!file) return;
-  if (!/\.zip$/i.test(file.name)) { toast('Нужен zip-архив', 'err'); return; }
-  toast('Распаковываю ' + file.name + '…', 'info');
-  try {
-    const r = await Z.applyZip(file.path);
-    toast('Установлена версия ' + r.version, 'ok'); afterInstall();
-  } catch (err) { toast('Ошибка: ' + err.message, 'err'); }
-});
-// dropzone-подсветка на вкладке обновлений
-const dz = $('#dropZone');
-['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('hot'); }));
-['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, () => dz.classList.remove('hot')));
 
 function afterInstall() {
   refreshStatus(); loadSettings();
@@ -1191,7 +1225,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') lampPopClo
 // Прячем: домены-и-списки, автозагрузка (тонкие настройки — для продвинутых).
 // В простом режиме остаются: панель, тесты, диагностика, обновления, настройки.
 // Прячем «стратегии» (ими рулит автоподбор), «домены-и-списки» и «автозагрузку».
-const SIMPLE_HIDDEN = ['strategies', 'lists', 'autostart'];
+const SIMPLE_HIDDEN = ['strategies', 'fakes', 'lists', 'autostart'];
 let uiMode = 'simple';
 const DEFAULT_HUE = 258; // фиолетовый — прежний дефолт
 let uiHue = DEFAULT_HUE;
